@@ -3,10 +3,11 @@
 Tracking and backport material for the ASUS ExpertBook Ultra B9406CAA. This
 directory no longer describes every file as a submission candidate: one fix is
 already in Linus' tree, one proposed audio quirk was invalid, and the display
-quirk is held while Linux 7.2 is tested with the repaired generic code paths.
+quirk turned out to pick the wrong self-refresh mode for this panel.
 
 Status checked against `torvalds/linux` and the released Linux 7.2.1 sources on
-2026-08-28.
+2026-08-28; the display status was revised on 2026-09-01 after the Linux 7.2
+retest.
 
 ## Accepted upstream
 
@@ -43,19 +44,28 @@ it.
 
 ### `0001-drm-i915-Add-Panel-Replay-quirk-for-ASUS-ExpertBook-.patch`
 
-This is retained only as a fallback for a reproducible B9406CAA regression; it
-is **not submission-ready while Linux 7.2 is being tested**. Older kernels
-reproduced PSR idle, selective-fetch and DSB timeouts, but 7.2 contains generic
-Panther Lake Panel Replay/PSR/DC-state and Xe recovery fixes. `display-fix`
-1.3 therefore removes the global `xe.enable_psr=0`,
-`xe.enable_psr2_sel_fetch=0` and `xe.enable_panel_replay=0` switches while
-keeping the independent, verified `xe.enable_dpcd_backlight=2` brightness
-selection.
+Not submission-ready, and no longer the right fix. The patch quirks off Panel
+Replay for this sink OUI, which on Linux 7.2 drops `xe` into PSR2 selective
+update over the panel's DSC link, and that mode paints red/green garbage on
+every screen update (most plausibly because the driver gates PSR2 + DSC on
+platform generation only, while this panel advertises DSC selective update for
+Panel Replay alone). The mode that works is PSR1, which `display-fix` 1.4
+selects with `xe.enable_panel_replay=0 xe.enable_psr=1`: Panel Replay itself
+loses the panel's HDR colorimetry after every HDR-enabling modeset (washed out
+colors until something streams frames with the SDPs again) and leaves stale
+content on screen, with or without Early Transport. An upstreamable equivalent
+would be a per-panel quirk that forces PSR1 by disabling both Panel Replay and
+PSR2, which neither `intel_quirks.c` nor the `drm_dp_dpcd_quirk` table has yet
+(`DP_DPCD_QUIRK_NO_PSR` is the closest). That work, together with a root cause
+for the colorimetry loss, is tracked out of tree.
 
-If the old freeze reappears during screen capture, suspend/resume or a long
-idle/mixed-use soak, capture the journal and reopen
-[issue #7](https://github.com/burakgon/asus-expertbook-linux/issues/7). Only
-then should this sink-OUI/subsystem-scoped Panel Replay disable be reconsidered.
+Related and already fixed: the `mismatch in vsc dp vsc sdp` error and
+`intel_modeset_verify.c` WARN that 7.2 logs on every HDR modeset with Panel
+Replay are a readout false positive (`intel_dp_vsc_sdp_unpack()` rejects the
+revision 7 VSC packet the driver itself emits for Panel Replay with
+colorimetry). Kernel commit `e2cb54fbe4c3` ("drm/i915/dp: Fix VSC SDP readout
+for Panel Replay with colorimetry") fixes it in Sultan Alsawaf's tree; upstream
+submission is pending.
 
 ## Retired: the former `0002` sidecar-amplifier patch
 
