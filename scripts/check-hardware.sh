@@ -137,6 +137,20 @@ if [[ -n $fingerprint ]]; then
       warn "install/update the normal libfprint + fprintd packages (need libfprint 1.94.100+)"
     fi
   fi
+  fp_pwr=""
+  for d in /sys/bus/usb/devices/*; do
+    if [[ -r "$d/idVendor" && -r "$d/idProduct" ]]; then
+      if [[ "$(<"$d/idVendor")" == "2808" && "$(<"$d/idProduct")" == "a97a" ]]; then
+        [[ -r "$d/power/control" ]] && fp_pwr="$(<"$d/power/control")"
+        break
+      fi
+    fi
+  done
+  if [[ "$fp_pwr" == "on" ]]; then
+    ok "USB autosuspend disabled (power/control=on) — sensor stays awake"
+  else
+    warn "USB autosuspend active (power/control=$fp_pwr) — fingerprint-fix module required to prevent hanging scans"
+  fi
 else
   note "FocalTech 2808:a97a not detected"
 fi
