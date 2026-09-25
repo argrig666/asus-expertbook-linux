@@ -50,15 +50,62 @@ different distro, the modules themselves still apply — only the
 
 | Hardware | Symptom out of the box | After installing | Module |
 |---|---|---|---|
-| **PixArt I²C-HID** haptic touchpad `093A:4F05` (ACPI `ASCP1D80`) | **Touchpad doesn't move the cursor.** Kernel log spams `kernel bug: Touch jump detected and discarded.` libinput rejects every event. | Cursor responds to light touches like any normal laptop. Zero "Touch jump" lines. | [`touchpad-fix`](touchpad-fix/) |
+| **PixArt I²C-HID** haptic touchpad `093A:4F05` (ACPI `ASCP1D80`) | **Touchpad doesn't move the cursor.** Kernel log spams `kernel bug: Touch jump detected and discarded.` libinput rejects every event. A separate failure wedges `i2c_designware.0` and freezes the whole desktop; see [below](#if-the-desktop-freezes). | Cursor responds to light touches like any normal laptop. Zero "Touch jump" lines. The bus wedge is a kernel stall, not the pressure quirk. | [`touchpad-fix`](touchpad-fix/) |
 | **Cirrus CS42L43** codec + 2× **CS35L56** speaker amps (PCI subsystem `1043:15e4`) | **Dummy Output / silent speakers.** A ghost RT722 can abort ALSA card registration; older userspace also lacks tuning/UCM. | Uses the accepted in-kernel B9406 quirk when present and DKMS only on older kernels; HiFi routing and calibrated amps work. | [`audio-fix`](audio-fix/) |
 | **Intel Wi-Fi 7 BE211** Panther Lake CNVi (`8086:e440`) | **Wi-Fi 7 (802.11be / EHT) is unstable.** EHT RX can collapse to MCS0/NSS1 and MLO sessions tear down. Linux 7.2's C106 firmware may separately flood `missed beacons` warnings even while data flows. | EHT disabled (`disable_11be=Y`) → fast **Wi-Fi 6 / HE** fallback; status reports firmware and warning count without hiding logs or forcing a firmware downgrade. | [`wifi-fix`](wifi-fix/) |
-| **Samsung Display Corp** eDP panel + Intel **`xe`** driver (Xe3 Panther Lake iGPU) | Older kernels could wedge PSR/Panel Replay; brightness could also change in sysfs without changing panel luminance. | Linux 7.2 self-refresh defaults retained; forced VESA DPCD backlight makes KDE/sysfs brightness work. | [`display-fix`](display-fix/) |
+| **Samsung Display Corp** eDP panel + Intel **`xe`** driver (Xe3 Panther Lake iGPU) | Panel Replay / PSR2 selective fetch can freeze the panel; brightness can change in sysfs without changing luminance. | `xe.enable_panel_replay=0`, `xe.enable_psr2_sel_fetch=0`, and VESA DPCD backlight (`xe.enable_dpcd_backlight=2`). `xe.enable_psr=0` is not set. | [`display-fix`](display-fix/) |
 | **Intel Core Ultra X7/X9** Panther Lake hybrid (P + E + LP-E cores) | **Idle power 4–5 W**, fans audible at idle, P-cores never deep-sleep. | Idle ≈ 2–2.5 W. Workload parks on a single LP-E core. P-cores reach `C10`. | [`intel-perf-fix`](intel-perf-fix/) |
 | **USB UVC webcam** (+ idle Panther Lake NPU) | **No AI camera effects.** Windows Studio Effects (background blur, smart framing) doesn't exist on Linux out of the box. | **CPU** background blur via OBS + `obs-backgroundremoval`, exposed as a virtual camera ("AI Camera"). *(NPU offload is not available in the OBS plugin on Linux — see the module's reality-check note.)* | [`webcam-ai-fix`](webcam-ai-fix/) |
 | **Shinetech USB camera + UEFI ESRT target** | ASUS camera firmware 3009 is distributed as a Windows EXE. | Compares locally against the fixed, verified 3009 baseline; offers a confirmed `fwupd` capsule update without running Windows or querying ASUS for newer versions. | [`camera-firmware`](camera-firmware/) |
 | **Ambient light sensor** (`iio` `als`) + keyboard backlight | **The backlight never adapts to the room.** KDE PowerDevil reads the sensor for *screen* brightness only; the keyboard stays wherever the Fn keys left it, and comes up dark after every boot. | *(optional)* The backlight follows the room using Windows 11's documented ALR curve — dim in the dark, brightest around 40–100 lux, off above 200–300 lux. Forced off with the lid shut; Fn keys still take over. | [`keyboard-backlight-auto`](keyboard-backlight-auto/) |
 | **ASUS BIOS `SLKB` ACPI method** (BIOS `B9406CAA.312`) | **Keyboard brightness reads back as `0`** no matter what it was set to — sysfs, UPower and `brightnessctl` all report a dark keyboard, and `systemd-backlight` restores `0` at every boot. Writes themselves reach the EC fine. | *(superseded)* Nothing to fix on the write path: the v1.x `asusd` workaround targeted an ACPI branch mainline `asus-wmi` never reaches. Kept for older firmware, skips install by default. | [`keyboard-backlight-fix`](keyboard-backlight-fix/) |
+
+## If the desktop freezes
+
+On the B9406CAA the PixArt touchpad sits on `i2c_designware.0`. When that
+controller wedges, the desktop stops updating and the touchpad dies. This is
+not the libinput "touch jump" bug, and `touchpad-fix` does not prevent it.
+It has repeated on Omarchy with `linux 7.2.3-arch1-3` at the end of long
+sessions. One of those wedges started within a minute after resume from
+suspend. The kernel log does not need a PSR or DSB error for this hang.
+
+Signature, in order:
+
+```
+i2c_designware i2c_designware.0: controller timed out
+i2c_designware i2c_designware.0: timeout in disabling adapter
+i2c_designware i2c_designware.0: timeout waiting for bus ready
+```
+
+The last line then repeats about twenty times a second until reboot.
+`hid-sensor-hub ... timeout waiting for response from ISHTP device` can show
+up a few minutes earlier. `irq/*-ASCP1D80:00` and `kworker/*+i915_flip` sit
+in uninterruptible sleep (`D` in `ps`). Unloading the touchpad driver does
+not recover a thread that is already stuck there.
+
+While the session still accepts a command, rebind the I2C-HID driver. On
+Omarchy that is `omarchy restart trackpad`. Anywhere else:
+
+```sh
+for dev in /sys/bus/i2c/drivers/i2c_hid_acpi/i2c-*; do
+  name=$(basename "$dev")
+  echo "$name" | sudo tee /sys/bus/i2c/drivers/i2c_hid_acpi/unbind
+  sleep 1
+  echo "$name" | sudo tee /sys/bus/i2c/drivers/i2c_hid_acpi/bind
+done
+```
+
+If the rebind hangs, or the picture is already frozen, reboot. A reboot is
+what ended the logged incidents. Do not poll `acpitz` or ASUS `hwmon`
+fan/temperature nodes from a status bar: those ACPI reads take the embedded
+controller and stall this same I2C bus and the sensor hub.
+
+Confirm with:
+
+```sh
+journalctl -k -b | grep -E 'controller timed out|timeout waiting for bus ready|ISHTP device'
+ps -eo stat,pid,wchan:24,cmd | awk 'NR==1 || $2 ~ /^D/'
+```
 
 > **Nothing this repo installs is a band-aid in the bad sense.** Every module
 > uses the exact same upstream-recognised mechanism (udev hwdb, libinput
@@ -111,7 +158,7 @@ typing single letters. Numbered table, color-coded state, cached.
   ------------------------------------------------------------------------------------
   1   audio-fix                 3.1.0    3.1.0     up to date     Adaptive ghost-RT722 fix + HiFi audio
   2   camera-firmware           3009     3009      up to date     Verified camera UEFI capsule
-  3   display-fix               1.3.0    1.3.0     up to date     Linux 7.2 display defaults + DPCD brightness
+  3   display-fix               1.4.0    1.4.0     up to date     DPCD brightness, Panel Replay and selective fetch off
   4   intel-perf-fix            1.1.0    1.1.0     up to date     thermald + intel-lpmd
   5   keyboard-backlight-auto   1.0.0    1.0.0     up to date     Ambient-light keyboard backlight
   6   keyboard-backlight-fix    2.0.0    -         not installed  (superseded) asusd workaround
@@ -268,7 +315,7 @@ continues to work.
 
 </details>
 
-### 4. [`display-fix`](display-fix/) — Linux 7.2 display defaults and working brightness
+### 4. [`display-fix`](display-fix/) — Panel Replay off, and working brightness
 
 <details><summary><b>The bug</b> — xe driver hangs Panel Replay handshake</summary>
 
@@ -295,25 +342,34 @@ and is **not** cured by disabling PSR.
 
 </details>
 
-<details><summary><b>The current fix</b> — retain repaired Linux 7.2 self-refresh defaults and force VESA DPCD backlight</summary>
+<details><summary><b>The current fix</b> — DPCD backlight, Panel Replay off, PSR2 selective fetch off</summary>
 
 | File | Path | What it does |
 |---|---|---|
-| `xe-dpcd-backlight.conf` | `/etc/modprobe.d/` | Forces only `enable_dpcd_backlight=2` for a late xe module load. |
-| `limine-display.conf` | `/etc/limine-entry-tool.d/90-asus-expertbook-linux-display.conf` | Adds only `xe.enable_dpcd_backlight=2` to every Limine kernel entry. Value `2` forces the VESA AUX/DPCD interface when sysfs brightness otherwise changes without changing panel luminance. |
+| `xe-dpcd-backlight.conf` | `/etc/modprobe.d/` | Same three parameters, for a late `xe` reload. |
+| `limine-display.conf` | `/etc/limine-entry-tool.d/90-asus-expertbook-linux-display.conf` | Appends `xe.enable_dpcd_backlight=2 xe.enable_panel_replay=0 xe.enable_psr2_sel_fetch=0`. |
 
-Linux 7.2 contains generic Panther Lake Panel Replay/PSR/DC-state,
-selective-fetch, DSB and Xe recovery fixes. Version 1.3 therefore retires the
-older global `xe.enable_psr=0`, `xe.enable_psr2_sel_fetch=0` and
-`xe.enable_panel_replay=0` overrides. Install also archives the old Omarchy
-drop-in so it cannot silently re-add them. The independent DPCD brightness
-selection remains.
+`xe.enable_dpcd_backlight=2` forces the VESA AUX/DPCD brightness interface.
+`xe.enable_panel_replay=0` is the switch Omarchy already installs for this
+laptop. `xe.enable_psr2_sel_fetch=0` stays because turning Panel Replay off
+by itself falls back to PSR2 selective fetch. `xe.enable_psr=0` is not set:
+it does not cover Panel Replay ([issue #7](https://github.com/burakgon/asus-expertbook-linux/issues/7)).
 
-[`upstream-patches/0001`](upstream-patches/) is retained only as a fallback,
-not as a submission-ready patch. If a long screen-capture, suspend/resume and
-mixed-use soak reproduces the old freeze on 7.2+, collect the failing journal
-in [issue #7](https://github.com/burakgon/asus-expertbook-linux/issues/7)
-before considering a device-scoped disable again.
+Version 1.3 dropped all three `=0` switches on the theory that Linux 7.2's
+generic Panther Lake fixes were enough, and it archived Omarchy's
+`asus-expertbook-b9406-display.conf` so the distro could not put Panel Replay
+back. That soak is not clean. On Omarchy with `linux 7.2.3-arch1-3` and only
+`xe.enable_dpcd_backlight=2` on the cmdline, three sessions ended in a hard
+freeze. The kernel signature of those freezes was the touchpad I2C wedge
+documented [above](#if-the-desktop-freezes), not a captured `Timed out waiting
+PSR idle state` line, so the `=0` switches are not claimed as the cure for
+that wedge. They are restored because 7.2 did not earn their removal, and
+because 1.3 was actively deleting a workaround the distro still ships.
+Version 1.4 puts Omarchy's drop-in back if 1.3 archived it.
+
+[`upstream-patches/0001`](upstream-patches/) remains a device-scoped quirk
+draft, not a submission, until the global switches are shown to be
+unnecessary on a kernel that completes the soak.
 
 </details>
 
@@ -670,7 +726,7 @@ pending and retired work:
 
 | # | Tree | Replaces |
 |---|---|---|
-| `0001` | Linux display | Experimental fallback; held while 7.2 runs with PSR/Panel Replay defaults |
+| `0001` | Linux display | Device-scoped Panel Replay quirk. Not submitted. Global cmdline switches stay until a clean 7.2 soak. |
 | former `0002` | Linux sound | Removed: B9406CAA is not a sidecar-amplifier design |
 | `0003` | libinput | Pending PixArt pressure-axis quirk |
 | `0004` | Linux SoundWire | **Accepted** as upstream commit `90af3209742d`; retained for backports |

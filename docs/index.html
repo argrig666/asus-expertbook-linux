@@ -464,6 +464,18 @@ Result: install-all is appropriate for this hardware.</code></pre>
             confirms the pressure-axis quirk is loaded.
           </div>
         </div>
+        <p>
+          A second failure mode freezes the whole desktop. <code>i2c_designware.0</code>
+          logs <code>controller timed out</code>, then <code>timeout in disabling adapter</code>,
+          then <code>timeout waiting for bus ready</code> about twenty times a second.
+          The <code>ASCP1D80</code> IRQ thread and <code>i915_flip</code> workers sit in
+          D-state. This has repeated on linux 7.2.3 at the end of long sessions,
+          including within a minute after resume. While the session still accepts
+          input, rebind <code>i2c_hid_acpi</code> (<code>omarchy restart trackpad</code>
+          on Omarchy). If that hangs, reboot. Do not poll <code>acpitz</code> or ASUS
+          hwmon fan nodes from a status bar. The pressure quirk above does not
+          prevent this wedge.
+        </p>
       </div>
 
       <div class="ba-block">
@@ -516,9 +528,10 @@ Result: install-all is appropriate for this hardware.</code></pre>
           <div class="ba-arrow">→</div>
           <div class="ba-cell ba-good">
             <strong>After — <code>display-fix</code></strong>
-            Linux 7.2's repaired PSR / Panel Replay defaults are retained;
+            <code>xe.enable_panel_replay=0</code> and
+            <code>xe.enable_psr2_sel_fetch=0</code> stay on the cmdline.
             <code>xe.enable_dpcd_backlight=2</code> makes panel brightness follow
-            the sysfs/KDE setting.
+            the sysfs setting. <code>xe.enable_psr=0</code> is not set.
           </div>
         </div>
       </div>
@@ -650,7 +663,7 @@ sudo reboot</code></pre>
   ------------------------------------------------------------------------------------
   1   audio-fix                3.1.0    3.1.0     up to date     Adaptive ghost-RT722 fix + HiFi audio
   2   camera-firmware          3009     3009      up to date     Verified camera UEFI capsule
-  3   display-fix              1.3.0    1.3.0     up to date     Linux 7.2 defaults + DPCD brightness
+  3   display-fix              1.4.0    1.4.0     up to date     DPCD brightness, Panel Replay and selective fetch off
   4   intel-perf-fix           1.1.0    1.1.0     up to date     thermald + intel-lpmd
   5   keyboard-backlight-auto  1.0.0    1.0.0     up to date     Ambient-light keyboard backlight
   6   keyboard-backlight-fix   2.0.0    -         not installed  (superseded) asusd workaround
@@ -712,8 +725,8 @@ Actions
           </tr>
           <tr>
             <td><a href="https://github.com/burakgon/asus-expertbook-linux/tree/main/display-fix"><code>display-fix</code></a></td>
-            <td><span class="mono">1.3.0</span></td>
-            <td>Linux 7.2 PSR/Panel Replay defaults plus forced VESA DPCD backlight for working brightness</td>
+            <td><span class="mono">1.4.0</span></td>
+            <td>DPCD brightness, Panel Replay off, PSR2 selective fetch off. Does not set xe.enable_psr=0</td>
           </tr>
           <tr>
             <td><a href="https://github.com/burakgon/asus-expertbook-linux/tree/main/intel-perf-fix"><code>intel-perf-fix</code></a></td>
@@ -831,7 +844,7 @@ cs35l56 sdw:0:2:01fa:3556:01:0: Tuning PID: 0x23134, SID: 0x470200  ← with</co
       </details>
 
       <details>
-        <summary><code>display-fix</code> — Linux 7.2 display defaults plus DPCD brightness</summary>
+        <summary><code>display-fix</code> — Panel Replay off, selective fetch off, DPCD brightness</summary>
         <p>
           The Samsung Display Corp panel reports IEEE OUI <code>00:aa:01</code>
           in DPCD register 0x300 and supports Panel Replay Selective Update
@@ -851,26 +864,25 @@ kwin_wayland: Pageflip timed out! This is a bug in the xe kernel driver</code></
           empty <code>pstore</code>/BERT.
         </p>
         <p>
-          Linux 7.2 contains generic Panther Lake Panel Replay/PSR/DC-state,
-          selective-fetch, DSB and Xe recovery fixes. Version 1.3 re-enables
-          those kernel defaults instead of carrying the older global
-          <code>=0</code> safety switches. Issue
-          <a href="https://github.com/burakgon/asus-expertbook-linux/issues/7">#7</a>
-          records the older reproducer and the Linux 7.2 retest.
+          Version 1.3 turned the global switches off to retest Linux 7.2 and
+          archived Omarchy's Panel Replay drop-in. That was too broad.
+          <a href="https://github.com/burakgon/asus-expertbook-linux/issues/7">Issue #7</a>
+          only suggested dropping <code>xe.enable_psr=0</code>. Omarchy still
+          installs <code>xe.enable_panel_replay=0</code> for this laptop.
+          Sessions on linux 7.2.3 with only the DPCD backlight parameter still
+          hard-froze; the journal showed the touchpad I2C wedge, not a new
+          PSR-idle error. Version 1.4 restores Panel Replay and PSR2 selective
+          fetch disables, leaves <code>xe.enable_psr=0</code> unset, and puts
+          Omarchy's drop-in back if 1.3 archived it.
         </p>
         <p><strong>Files installed:</strong></p>
         <ul>
-          <li><code>/etc/modprobe.d/xe-dpcd-backlight.conf</code> — forces only <code>enable_dpcd_backlight=2</code> for any late module load</li>
-          <li><code>/etc/limine-entry-tool.d/90-asus-expertbook-linux-display.conf</code> — appends only <code>xe.enable_dpcd_backlight=2</code>; the post-install hook calls <code>limine-update</code></li>
+          <li><code>/etc/modprobe.d/xe-dpcd-backlight.conf</code> — <code>enable_dpcd_backlight=2</code>, <code>enable_panel_replay=0</code>, <code>enable_psr2_sel_fetch=0</code> for a late module load</li>
+          <li><code>/etc/limine-entry-tool.d/90-asus-expertbook-linux-display.conf</code> — the same three parameters on the kernel cmdline; the post-install hook calls <code>limine-update</code></li>
         </ul>
         <p>
-          Install removes the old PSR/Panel Replay modprobe file and archives
-          the legacy Omarchy Limine drop-in so neither can silently re-add
-          <code>xe.enable_psr=0</code>, <code>xe.enable_psr2_sel_fetch=0</code> or
-          <code>xe.enable_panel_replay=0</code>. The DPCD brightness override is
-          independent and remains verified on this panel. Patch <code>0001</code>
-          is retained only as a fallback if a 7.2+ long soak reproduces the
-          freeze; it is not currently submission-ready.
+          Patch <code>0001</code> stays a device-scoped draft until a kernel
+          completes a soak without the cmdline switches.
         </p>
       </details>
 
@@ -1216,7 +1228,7 @@ EC set level 0/3 | manual override active for 0.0-18.4 lux (reading 9.2)</code><
           <tr>
             <td><span class="mono">0001</span></td>
             <td>Linux display</td>
-            <td>Experimental fallback; held while Linux 7.2 runs with repaired PSR/Panel Replay defaults</td>
+            <td>Device-scoped Panel Replay quirk. Not submitted. Cmdline switches stay until a clean soak.</td>
           </tr>
           <tr>
             <td>former <span class="mono">0002</span></td>

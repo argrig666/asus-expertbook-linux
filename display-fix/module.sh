@@ -1,25 +1,26 @@
 # shellcheck shell=bash
 # display-fix module manifest.
 #
-# Linux 7.2 includes the Panther Lake Panel Replay/PSR, selective-fetch, DSB,
-# DC-state and Xe recovery fixes needed to retest the panel with self-refresh
-# enabled. Do not globally force PSR, PSR2 selective fetch or Panel Replay off.
-# Keep only the panel's independently verified VESA DPCD backlight override
-# (`xe.enable_dpcd_backlight=2`), which fixes the B9406CAA case where sysfs
-# brightness changes but panel luminance does not. modprobe.d alone is NOT
-# enough on this distro — xe loads from initramfs before
-# /etc/modprobe.d is honoured, so the params have to land on the kernel
-# cmdline. We install a managed `limine-entry-tool` drop-in and regenerate the
-# Limine entries. This is the CachyOS source of truth; `/etc/default/limine`
-# is not used by current limine-mkinitcpio-hook releases.
+# Keep three xe parameters, on both the Limine cmdline and in modprobe.d.
+# modprobe.d alone is NOT enough on this distro — xe loads from initramfs
+# before /etc/modprobe.d is honoured — so the parameters have to land on the
+# kernel cmdline. We install a managed limine-entry-tool drop-in and
+# regenerate the Limine entries. `/etc/default/limine` is not used by current
+# limine-mkinitcpio-hook releases.
 #
-# We still drop the modprobe.d file as belt-and-suspenders for any future
-# scenario where xe is rmmod'd and re-loaded post-boot. Install also retires
-# the two older local files that added the global `=0` safety switches.
+#   xe.enable_dpcd_backlight=2    VESA AUX brightness (sysfs otherwise lies)
+#   xe.enable_panel_replay=0      Omarchy's B9406 workaround; still required
+#   xe.enable_psr2_sel_fetch=0    Panel Replay off falls back to PSR2 selective
+#                                 fetch, which has parked this panel in SU_STANDBY
+#
+# Do not set xe.enable_psr=0. It does not cover Panel Replay (issue #7).
+# Do not archive Omarchy's asus-expertbook-b9406-display.conf. Version 1.3
+# did that, which stripped xe.enable_panel_replay=0 out from under Omarchy.
+# Linux 7.2.3-arch1 boots without these two switches still hard-froze.
 
 MODULE_NAME="display-fix"
-MODULE_DESC="B9406CAA xe: working DPCD brightness; PSR/Panel Replay use Linux 7.2 defaults"
-MODULE_VERSION="1.3.0"
+MODULE_DESC="B9406CAA xe: DPCD brightness, Panel Replay and PSR2 selective fetch off"
+MODULE_VERSION="1.4.0"
 
 MODULE_FILES=(
   "xe-dpcd-backlight.conf:/etc/modprobe.d/xe-dpcd-backlight.conf"
@@ -28,22 +29,21 @@ MODULE_FILES=(
 
 _df_remove_obsolete_files() {
   local old_modprobe="/etc/modprobe.d/xe-disable-psr.conf"
-  local old_limine="/etc/limine-entry-tool.d/asus-expertbook-b9406-display.conf"
-  local archived="${old_limine}.disabled-by-asus-expertbook-linux"
+  local omarchy_limine="/etc/limine-entry-tool.d/asus-expertbook-b9406-display.conf"
+  local archived="${omarchy_limine}.disabled-by-asus-expertbook-linux"
 
+  # xe-disable-psr.conf forced xe.enable_psr=0. That switch does not cover
+  # Panel Replay and is not part of this module.
   if [[ -f $old_modprobe ]]; then
     rm -- "$old_modprobe"
     log "[display-fix] removed obsolete PSR-disable file $old_modprobe"
   fi
 
-  if [[ -f $old_limine ]]; then
-    if [[ ! -e $archived ]]; then
-      mv -- "$old_limine" "$archived"
-      log "[display-fix] archived obsolete Limine drop-in as $archived"
-    else
-      rm -- "$old_limine"
-      log "[display-fix] removed duplicate obsolete Limine drop-in $old_limine"
-    fi
+  # Version 1.3 archived Omarchy's own Panel Replay drop-in. Put it back.
+  # Our drop-in sets the same xe.enable_panel_replay=0, so both may coexist.
+  if [[ -f $archived && ! -e $omarchy_limine ]]; then
+    mv -- "$archived" "$omarchy_limine"
+    log "[display-fix] restored Omarchy Panel Replay drop-in $omarchy_limine"
   fi
 }
 
@@ -76,7 +76,7 @@ module_post_install() {
   _df_remove_obsolete_files
   _df_regen_limine
   echo
-  echo "Reboot to apply: xe will use Linux 7.2 PSR/Panel Replay defaults with VESA DPCD backlight forced."
+  echo "Reboot to apply: VESA DPCD backlight, Panel Replay off, PSR2 selective fetch off."
 }
 
 module_post_uninstall() {
@@ -84,19 +84,20 @@ module_post_uninstall() {
   _df_remove_obsolete_files
   _df_regen_limine
   echo
-  echo "Reboot to stop forcing the VESA DPCD backlight interface."
+  echo "Reboot to stop forcing the DPCD backlight interface and the Panel Replay / selective-fetch switches."
 }
 
 module_status_extra() {
   local backlight_value="" token
 
-  if grep -Eq '(^| )(xe\.enable_psr=0|xe\.enable_psr2_sel_fetch=0|xe\.enable_panel_replay=0)( |$)' \
-      /proc/cmdline 2>/dev/null; then
-    printf '  self-refresh:%s legacy =0 override active in this boot — reboot to use kernel defaults%s\n' \
-      "$c_warn" "$c_off"
-  else
-    printf '  self-refresh:%s no global PSR/Panel Replay disable; Linux defaults active%s\n' \
+  local cmdline=""
+  cmdline="$(tr '\n' ' ' </proc/cmdline 2>/dev/null || true)"
+  if [[ $cmdline == *"xe.enable_panel_replay=0"* && $cmdline == *"xe.enable_psr2_sel_fetch=0"* ]]; then
+    printf '  self-refresh:%s Panel Replay and PSR2 selective fetch disabled%s\n' \
       "$c_ok" "$c_off"
+  else
+    printf '  self-refresh:%s missing xe.enable_panel_replay=0 or xe.enable_psr2_sel_fetch=0 — reboot after install%s\n' \
+      "$c_warn" "$c_off"
   fi
 
   while IFS= read -r token; do
@@ -122,8 +123,8 @@ module_status_extra() {
     mode="$(awk -F': ' '/^PSR mode:/ {print $2; exit}' /sys/kernel/debug/dri/0/i915_edp_psr_status 2>/dev/null)"
     if [[ -n "$mode" ]]; then
       case "$mode" in
-        disabled*) printf '  panel:   %sPSR mode: %s%s\n' "$c_warn" "$mode" "$c_off" ;;
-        *)         printf '  panel:   %sPSR mode: %s%s\n' "$c_ok" "$mode" "$c_off" ;;
+        *"Panel Replay"*) printf '  panel:   %sPSR mode: %s%s\n' "$c_warn" "$mode" "$c_off" ;;
+        *)                printf '  panel:   %sPSR mode: %s%s\n' "$c_ok" "$mode" "$c_off" ;;
       esac
     fi
   fi

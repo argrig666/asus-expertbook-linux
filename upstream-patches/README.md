@@ -3,7 +3,7 @@
 Tracking and backport material for the ASUS ExpertBook Ultra B9406CAA. This
 directory no longer describes every file as a submission candidate: one fix is
 already in Linus' tree, one proposed audio quirk was invalid, and the display
-quirk is held while Linux 7.2 is tested with the repaired generic code paths.
+quirk stays unsubmitted while the cmdline workaround remains installed.
 
 Status checked against `torvalds/linux` and the released Linux 7.2.1 sources on
 2026-08-28.
@@ -43,19 +43,20 @@ it.
 
 ### `0001-drm-i915-Add-Panel-Replay-quirk-for-ASUS-ExpertBook-.patch`
 
-This is retained only as a fallback for a reproducible B9406CAA regression; it
-is **not submission-ready while Linux 7.2 is being tested**. Older kernels
-reproduced PSR idle, selective-fetch and DSB timeouts, but 7.2 contains generic
-Panther Lake Panel Replay/PSR/DC-state and Xe recovery fixes. `display-fix`
-1.3 therefore removes the global `xe.enable_psr=0`,
-`xe.enable_psr2_sel_fetch=0` and `xe.enable_panel_replay=0` switches while
-keeping the independent, verified `xe.enable_dpcd_backlight=2` brightness
-selection.
-
-If the old freeze reappears during screen capture, suspend/resume or a long
-idle/mixed-use soak, capture the journal and reopen
-[issue #7](https://github.com/burakgon/asus-expertbook-linux/issues/7). Only
-then should this sink-OUI/subsystem-scoped Panel Replay disable be reconsidered.
+Not submission-ready. Older kernels reproduced PSR idle, selective-fetch and
+DSB timeouts. `display-fix` 1.3 removed `xe.enable_psr=0`,
+`xe.enable_psr2_sel_fetch=0` and `xe.enable_panel_replay=0` to retest Linux
+7.2's generic Panther Lake paths, and it archived Omarchy's Panel Replay
+drop-in. That retest failed as a reason to drop the switches: Omarchy
+sessions on `linux 7.2.3-arch1-3` with only `xe.enable_dpcd_backlight=2`
+still hard-froze. The journal of those freezes shows the touchpad
+`i2c_designware.0` wedge, not a new PSR-idle line, so this patch is not the
+write-up of that wedge. `display-fix` 1.4 restores
+`xe.enable_panel_replay=0` and `xe.enable_psr2_sel_fetch=0` (not
+`xe.enable_psr=0`; see
+[issue #7](https://github.com/burakgon/asus-expertbook-linux/issues/7)) and
+stops deleting the Omarchy drop-in. Send this quirk only after a kernel
+completes a suspend/resume and mixed-use soak without the cmdline switches.
 
 ## Retired: the former `0002` sidecar-amplifier patch
 
