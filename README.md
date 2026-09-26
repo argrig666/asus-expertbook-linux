@@ -62,6 +62,9 @@ different distro, the modules themselves still apply — only the
 
 ## If the desktop freezes
 
+Full command list, the three logged incidents, and what to re-check after an
+update: [`docs/b9406-desktop-freeze.md`](docs/b9406-desktop-freeze.md).
+
 On the B9406CAA the PixArt touchpad sits on `i2c_designware.0`. When that
 controller wedges, the desktop stops updating and the touchpad dies. This is
 not the libinput "touch jump" bug, and `touchpad-fix` does not prevent it.
