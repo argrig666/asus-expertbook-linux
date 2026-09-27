@@ -61,7 +61,7 @@ overlay only where needed, and removes it once every kernel contains the quirk.
 | `cs35l56-…-l2u0.bin` / `.wmfw` | `/lib/firmware/cirrus/` | Per-OEM tuning + ROM `3.4.4`→`3.13.4` patch, left amp. **Fallback** for `linux-firmware-cirrus < 20260519`. |
 | `cs35l56-…-l2u1.bin` / `.wmfw` | `/lib/firmware/cirrus/` | Same, right amp. |
 | `52-disable-bt-sco-offload.conf` | `/etc/wireplumber/wireplumber.conf.d/` | Disables the dead `SSP2-BT` offload PCM so its probe stops spamming the log. A2DP/HFP Bluetooth still works via the PipeWire software path. |
-| `dkms/asus-expertbook-sof-sdw-3.0.0/` | `/usr/src/asus-expertbook-sof-sdw-3.0.0/` + `/lib/modules/*/updates/dkms/` | Board-scoped compatibility filter, built only for kernels lacking upstream commit `90af3209742d`; install also regenerates initramfs images. |
+| `dkms/asus-expertbook-sof-sdw-3.0.1/` | `/usr/src/asus-expertbook-sof-sdw-3.0.1/` + `/lib/modules/*/updates/dkms/` | Board-scoped compatibility filter, built only for kernels lacking upstream commit `90af3209742d`; install also regenerates initramfs images. |
 
 ### Installed only on `alsa-ucm-conf < 1.2.16` (otherwise the package provides them)
 
@@ -120,17 +120,27 @@ journalctl -k -b | grep -Ei 'sof|soundwire|cs35|cs42|snd'
 An empty card list together with `SDW3-Playback-SimpleJack`, `-EEXIST`, or
 `sof_sdw ... error -12` in the kernel log is the known phantom-RT722 failure.
 The duplicate SoundWire link aborts the `sof_sdw` probe before firmware, UCM,
-PipeWire, or WirePlumber can participate. Install `audio-fix` 3.1 and reboot
+PipeWire, or WirePlumber can participate. Install `audio-fix` 3.1.1 and reboot
 once. Its DKMS module is the packaged compatibility workaround;
 `./patch.sh status audio-fix` verifies the registration and selected module
 path for the running kernel.
+
+If audio disappears right after a kernel update, check whether DKMS actually
+rebuilt the overlay: `dkms status asus-expertbook-sof-sdw` must say
+`installed` for the running kernel. `added` means the build failed and the
+stock driver is back; the reason is in
+`/var/lib/dkms/asus-expertbook-sof-sdw/*/build/make.log`. This is what broke
+overlay 3.0.0 on Linux 7.2.8, whose stable update backported the 7.3
+`asoc_sdw_parse_sdw_endpoints(dev, ctx, ...)` signature; 3.0.1 detects that
+signature from the kernel headers.
 
 The permanent fix was accepted as upstream commit
 [`90af3209742d`](https://github.com/torvalds/linux/commit/90af3209742db61a7f9d7d054a16165818cfc6d8).
 The exact patch is retained in
 [`upstream-patches/0004`](../upstream-patches/0004-soundwire-dmi-quirks-Disable-ghost-rt722-on-ASUS-Exp.patch)
-for stable/distro backports. It landed after Linux 7.2 and is absent from 7.2.1;
-the installer detects the actual module marker instead of assuming a version.
+for stable/distro backports. It first ships in Linux 7.3 (since 7.3-rc1) and is
+still absent from 7.2.8; the installer detects the actual marker in
+`soundwire_intel` instead of assuming a version.
 
 ## Uninstall
 
@@ -155,14 +165,14 @@ stock kernel driver restored.
 
 ## Upstream tracking
 
-All three core pieces are now upstream, although the kernel quirk has not yet
-appeared in a released kernel:
+All three core pieces are now upstream; the kernel quirk first ships in
+Linux 7.3:
 
 - **UCM:** shipped in `alsa-ucm-conf 1.2.16` (combined `cs42l43-spk+cs35l56`
   codec dir + `sof-soundwire` `-spk` regex + the speaker confs). ✅
 - **Firmware:** shipped in `linux-firmware-cirrus >= 20260519` for `1043:15e4`. ✅
-- **Ghost RT722:** accepted in Linus' tree as `90af3209742d`; expected in a
-  future release or an earlier stable/distro backport. ✅
+- **Ghost RT722:** accepted in Linus' tree as `90af3209742d`, present since
+  7.3-rc1; not in 7.2.y stable as of 7.2.8. ✅
 
 The module keeps DKMS only for installed kernels that do not contain that DMI
 entry. It also keeps the `52-disable-bt-sco-offload.conf` drop-in until that

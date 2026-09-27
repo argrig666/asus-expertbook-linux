@@ -648,7 +648,7 @@ sudo reboot</code></pre>
 
   #   Module                    Version  Installed State          Description
   ------------------------------------------------------------------------------------
-  1   audio-fix                3.1.0    3.1.0     up to date     Adaptive ghost-RT722 fix + HiFi audio
+  1   audio-fix                3.1.1    3.1.1     up to date     Adaptive ghost-RT722 fix + HiFi audio
   2   camera-firmware          3009     3009      up to date     Verified camera UEFI capsule
   3   display-fix              1.3.0    1.3.0     up to date     Linux 7.2 defaults + DPCD brightness
   4   intel-perf-fix           1.1.0    1.1.0     up to date     thermald + intel-lpmd
@@ -697,7 +697,7 @@ Actions
           </tr>
           <tr>
             <td><a href="https://github.com/burakgon/asus-expertbook-linux/tree/main/audio-fix"><code>audio-fix</code></a></td>
-            <td><span class="mono">3.1.0</span></td>
+            <td><span class="mono">3.1.1</span></td>
             <td>Adaptive B9406CAA ghost-RT722 compatibility + HiFi UCM + CS35L56 tuning; skips DKMS when the upstream quirk is present</td>
           </tr>
           <tr>
@@ -788,10 +788,14 @@ cs35l56 sdw:0:2:01fa:3556:01:0: Tuning PID: 0x23134, SID: 0x470200  ← with</co
           overlay automatically whenever Arch/CachyOS installs a kernel that
           still needs it, and removes it once upstream commit
           <code>90af3209742d</code> is present in every installed kernel.
+          If audio vanishes right after a kernel update, run
+          <code>dkms status asus-expertbook-sof-sdw</code>: <code>added</code>
+          instead of <code>installed</code> means the rebuild failed. Overlay
+          3.0.0 cannot build on Linux 7.2.8+; 3.1.1 fixes that.
         </p>
-        <p><strong>Files installed (v3.1.0):</strong></p>
+        <p><strong>Files installed (v3.1.1):</strong></p>
         <ul>
-          <li><code>/usr/src/asus-expertbook-sof-sdw-3.0.0/</code> and <code>/lib/modules/*/updates/dkms/</code> — board-scoped compatibility filter, built only for kernels lacking upstream commit <code>90af3209742d</code></li>
+          <li><code>/usr/src/asus-expertbook-sof-sdw-3.0.1/</code> and <code>/lib/modules/*/updates/dkms/</code> — board-scoped compatibility filter, built only for kernels lacking upstream commit <code>90af3209742d</code></li>
           <li><code>/lib/firmware/cirrus/cs35l56-b0-dsp1-misc-104315e4-l2u{0,1}.bin</code> — per-OEM tuning blobs (fallback for <code>linux-firmware-cirrus &lt; 20260519</code>)</li>
           <li><code>/lib/firmware/cirrus/cs35l56-b0-dsp1-misc-104315e4-l2u{0,1}.wmfw</code> — generic CS35L56 Rev 3.13.4 firmware patch (chip ROM upgrades 3.4.4 → 3.13.4)</li>
           <li><code>/etc/wireplumber/wireplumber.conf.d/52-disable-bt-sco-offload.conf</code> — silences the dead SSP2-BT offload PCM that spams the kernel log</li>

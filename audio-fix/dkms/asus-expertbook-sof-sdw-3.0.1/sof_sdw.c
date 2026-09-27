@@ -1389,7 +1389,12 @@ static int sof_card_dai_links_create(struct snd_soc_card *card)
 	}
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 1, 0)
+#ifdef SOF_SDW_PARSE_DEV_CTX
+	/* 7.3 API, backported to 7.2.8: detected from the header by the Makefile */
+	ret = asoc_sdw_parse_sdw_endpoints(dev, ctx, sof_aux, sof_dais, sof_ends, &num_confs);
+#else
 	ret = asoc_sdw_parse_sdw_endpoints(card, sof_aux, sof_dais, sof_ends, &num_confs);
+#endif
 #else
 	ret = asoc_sdw_parse_sdw_endpoints(card, sof_dais, sof_ends, &num_confs);
 #endif

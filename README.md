@@ -109,7 +109,7 @@ typing single letters. Numbered table, color-coded state, cached.
 
   #   Module                    Version  Installed State          Description
   ------------------------------------------------------------------------------------
-  1   audio-fix                 3.1.0    3.1.0     up to date     Adaptive ghost-RT722 fix + HiFi audio
+  1   audio-fix                 3.1.1    3.1.1     up to date     Adaptive ghost-RT722 fix + HiFi audio
   2   camera-firmware           3009     3009      up to date     Verified camera UEFI capsule
   3   display-fix               1.3.0    1.3.0     up to date     Linux 7.2 display defaults + DPCD brightness
   4   intel-perf-fix            1.1.0    1.1.0     up to date     thermald + intel-lpmd
@@ -213,8 +213,11 @@ core has positively marked `UNATTACHED`; real RT722 hardware and every other
 model are untouched. The permanent DMI fix is already accepted upstream as
 [`90af3209742d`](https://github.com/torvalds/linux/commit/90af3209742db61a7f9d7d054a16165818cfc6d8).
 Install inspects every installed kernel module rather than guessing from its
-version, skips DKMS on kernels containing the upstream quirk, and removes the
-overlay automatically once every installed kernel has it.
+version, skips DKMS on kernels containing the upstream quirk (Linux 7.3+), and
+removes the overlay automatically once every installed kernel has it. 3.1.1
+fixes the overlay build on Linux 7.2.8+ (a stable backport changed the
+`soc_sdw_utils` API, so 3.0.0 silently failed to rebuild and audio fell back to
+*Dummy Output*), and no longer forces `LLVM=1` on GCC-built kernels.
 
 | File | Path | What it does |
 |---|---|---|
@@ -223,7 +226,7 @@ overlay automatically once every installed kernel has it.
 | `cs35l56+cs42l43-spk.conf`, `cs42l43-spk+cs35l56.conf` | `/usr/share/alsa/ucm2/sof-soundwire/` | The Speaker device for the combined codec — routes playback to `hw:,2` and the CS35L56 + CS42L43 amps. |
 | `cs42l43-spk+cs35l56-init.conf` | `/usr/share/alsa/ucm2/codecs/cs42l43-spk+cs35l56/` | Combined codec init (control remap + LED attach). `module.sh` symlinks `cs35l56+cs42l43-spk` → this so both kernel names resolve. |
 | `52-disable-bt-sco-offload.conf` | `/etc/wireplumber/wireplumber.conf.d/` | Disables the dead `SSP2-BT` offload PCM so its probe stops spamming the log. Bluetooth audio (A2DP/HFP) still works via the PipeWire software path. |
-| `dkms/asus-expertbook-sof-sdw-3.0.0/` | `/usr/src/` + `/lib/modules/*/updates/dkms/` | Compatibility overlay for released kernels lacking upstream commit `90af3209742d`; not built where the in-kernel DMI quirk is detected. |
+| `dkms/asus-expertbook-sof-sdw-3.0.1/` | `/usr/src/` + `/lib/modules/*/updates/dkms/` | Compatibility overlay for released kernels lacking upstream commit `90af3209742d`; not built where the in-kernel DMI quirk is detected. |
 
 > The **F1 speaker-mute LED can't be fixed from Linux** — this laptop exposes no
 > speaker-mute LED device, only `platform::micmute` (which the HiFi UCM drives).

@@ -22,12 +22,14 @@ Status checked against `torvalds/linux` and the released Linux 7.2.1 sources on
   RT722 endpoint before the SOF machine driver builds duplicate DAI links.
 
 The file here is the exact upstream commit patch, retained for distro/stable
-backports. It landed after Linux 7.2, and is absent from 7.2.1, so released
-kernels still need `audio-fix`'s DKMS overlay unless their distributor
-backported the commit. `audio-fix` 3.1 checks the installed `soundwire_bus`
-module for the B9406CAA marker per kernel: it builds DKMS only for kernels that
-lack the upstream quirk and removes the overlay once all installed kernels have
-it.
+backports. It first ships in Linux 7.3 (present since 7.3-rc1) and is still
+absent from 7.2.8 (rechecked 2026-09-28), so 7.2.y kernels need `audio-fix`'s
+DKMS overlay unless their distributor backported the commit. `audio-fix` 3.1.1
+checks the installed `soundwire_intel` module — the one that links
+`dmi-quirks.o` — for the B9406CAA marker per kernel: it builds DKMS only for
+kernels that lack the upstream quirk and removes the overlay once all installed
+kernels have it. (3.1.0 inspected `soundwire_bus`, which never carries the
+marker.)
 
 ## Pending or experimental
 

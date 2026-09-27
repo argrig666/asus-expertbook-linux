@@ -50,10 +50,10 @@
 
 MODULE_NAME="audio-fix"
 MODULE_DESC="B9406CAA audio: adaptive ghost-RT722 fix + HiFi UCM + cs35l56 firmware"
-MODULE_VERSION="3.1.0"
+MODULE_VERSION="3.1.1"
 
 AUDIO_DKMS_NAME="asus-expertbook-sof-sdw"
-AUDIO_DKMS_VERSION="3.0.0"
+AUDIO_DKMS_VERSION="3.0.1"
 AUDIO_DKMS_SOURCE="$MODULE_DIR/dkms/${AUDIO_DKMS_NAME}-${AUDIO_DKMS_VERSION}"
 AUDIO_DKMS_TARGET="/usr/src/${AUDIO_DKMS_NAME}-${AUDIO_DKMS_VERSION}"
 
@@ -95,12 +95,13 @@ ucm_hifi_is_upstream() {
 # audio_kernel_has_upstream_ghost_quirk [kernel-release]
 #
 # Do not rely on a kernel version: distributions may backport the fix. The
-# accepted SoundWire DMI entry embeds the exact board name in soundwire_bus, so
-# inspecting that module is both backport-safe and independent of the running
-# kernel. Commit: 90af3209742db61a7f9d7d054a16165818cfc6d8.
+# accepted SoundWire DMI entry embeds the exact board name in the module that
+# links drivers/soundwire/dmi-quirks.o -- soundwire_intel, not soundwire_bus --
+# so inspecting it is both backport-safe and independent of the running
+# kernel. Commit: 90af3209742db61a7f9d7d054a16165818cfc6d8 (Linux 7.3-rc1).
 audio_kernel_has_upstream_ghost_quirk() {
   local kernel="${1:-$(uname -r)}" module marker=""
-  module="$(modinfo -k "$kernel" -n soundwire_bus 2>/dev/null || true)"
+  module="$(modinfo -k "$kernel" -n soundwire_intel 2>/dev/null || true)"
   [[ -f $module ]] || return 1
 
   case "$module" in
@@ -152,7 +153,8 @@ module_install_state() {
 
 audio_remove_legacy_dkms() {
   local legacy name version source
-  for legacy in "sof-sdw-simplejack-fix/0.1" "soundwire-intel-b9406-ghostfix/0.1"; do
+  for legacy in "sof-sdw-simplejack-fix/0.1" "soundwire-intel-b9406-ghostfix/0.1" \
+                "asus-expertbook-sof-sdw/3.0.0"; do
     name="${legacy%/*}"
     version="${legacy#*/}"
     source="/usr/src/${name}-${version}"
@@ -163,8 +165,9 @@ audio_remove_legacy_dkms() {
         warn "[audio-fix] DKMS could not completely remove $legacy"
     fi
 
-    # These are exact names of the two experimental modules superseded by this
-    # repository. Never use a wildcard here.
+    # Exact names of the two experimental modules superseded by this
+    # repository, plus overlay 3.0.0, which cannot build on Linux 7.2.8+.
+    # Never use a wildcard here.
     rm -rf -- "$source"
   done
 }
