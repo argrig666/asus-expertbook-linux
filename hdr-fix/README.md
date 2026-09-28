@@ -61,7 +61,9 @@ Install:
 2. installs `meson`, `ninja`, `gcc`, `patch` and `hwdata` if missing;
 3. downloads the 0.3.0 release tarball and checks its SHA-256 (the same pin as
    Arch's PKGBUILD);
-4. applies the patches and builds the library, stopping on any failure;
+4. applies the patches, builds the library and runs its own test suite (64
+   EDID decode and print tests, including the expectation patch 0008
+   corrects), stopping on any failure before anything is installed;
 5. installs it in `/usr/local/lib/asus-expertbook-hdr/` and lists that
    directory in `/etc/ld.so.conf.d/asus-expertbook-hdr.conf`. The dynamic
    linker consults `ld.so.conf` directories before `/usr/lib`, so

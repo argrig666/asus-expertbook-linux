@@ -174,6 +174,14 @@ module_install() {
   ninja -C "$tmp/build" >/dev/null || die "[hdr-fix] build failed"
   [[ -f $tmp/build/libdisplay-info.so.$HDR_LDI_VERSION ]] || die "[hdr-fix] build produced no library"
 
+  # The library's own EDID suite, before anything is installed. It includes
+  # the jdi-lpm135m467-edp expectation that patch 0008 corrects.
+  log "[hdr-fix] running the library's tests"
+  if ! meson test -C "$tmp/build" --print-errorlogs >"$tmp/test.log" 2>&1; then
+    tail -n 40 "$tmp/test.log"
+    die "[hdr-fix] libdisplay-info's own tests failed; nothing was installed"
+  fi
+
   install -d -m 0755 "$HDR_LIBDIR" || die "[hdr-fix] cannot create $HDR_LIBDIR"
   install -m 0755 "$tmp/build/libdisplay-info.so.$HDR_LDI_VERSION" "$HDR_LIBDIR/" ||
     die "[hdr-fix] cannot install the library"

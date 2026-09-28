@@ -1181,8 +1181,9 @@ cs35l56 sdw:0:2:01fa:3556:01:0: Tuning PID: 0x23134, SID: 0x470200, TID: 0x84b06
           <code>meson</code>, <code>ninja</code>, <code>gcc</code>,
           <code>patch</code> and <code>hwdata</code> if missing, downloads the
           0.3.0 release tarball, checks its SHA-256 (the same pin as Arch's
-          PKGBUILD), applies the patches and builds the library, stopping on
-          any failure.
+          PKGBUILD), applies the patches, builds the library and runs its own
+          64-test EDID suite, stopping on any failure before anything is
+          installed.
         </p>
         <p><strong>Files installed:</strong></p>
         <ul>
