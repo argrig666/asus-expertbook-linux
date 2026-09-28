@@ -110,6 +110,10 @@ _ppb_install_dropin() {
     "$path"|"$path --block-driver=platform_profile") ;;
     *) die "[power-profile-bridge] power-profiles-daemon already runs a custom command line ($argv); add --block-driver=platform_profile to that override instead" ;;
   esac
+  # Prefixes such as "-" (ignore failure) or "+" show up as flags; a plain
+  # ExecStart= line would drop them.
+  [[ $(systemctl show -P ExecStartEx power-profiles-daemon.service 2>/dev/null) == *" flags= ;"* ]] ||
+    die "[power-profile-bridge] power-profiles-daemon's ExecStart carries execution flags; add --block-driver=platform_profile to that override instead"
   content="# Installed by asus-expertbook-linux (power-profile-bridge).
 # power-profile-bridge writes every platform-profile handler itself. The
 # daemon's platform_profile driver would emulate power-saver by writing

@@ -133,24 +133,29 @@ case ${1:-} in
   *)        echo "usage: $0 [--status | --apply PROFILE]" >&2; exit 2 ;;
 esac
 
-# gdbus monitor asks D-Bus to start the name it watches. Only follow a
-# power-profiles-daemon that is already running, so a machine that switched to
-# TLP or tuned is left alone; exiting 0 keeps systemd from restarting us.
-if ! systemctl is-active --quiet power-profiles-daemon.service; then
+# The daemon's current unique bus name (":1.113"). gdbus monitor asks D-Bus to
+# start the name it watches; a unique name cannot be activated, so watching
+# this one can never start power-profiles-daemon over TLP or tuned. When the
+# daemon is not running there is nothing to follow, and exiting 0 keeps
+# systemd from restarting us.
+owner=$(busctl --auto-start=no call org.freedesktop.DBus /org/freedesktop/DBus \
+  org.freedesktop.DBus GetNameOwner s "$BUS" 2>/dev/null | sed -n 's/^s "\(.*\)"$/\1/p')
+if [[ -z $owner ]]; then
   log "power-profiles-daemon is not running; nothing to follow"
   exit 0
 fi
 
 # One stream for three sources: profile changes from power-profiles-daemon,
 # logind's PrepareForSleep(false) after resume, and a reconcile tick. The
-# profile is applied whenever the daemon's name gets an owner (at start and
-# after every daemon restart). gdbus prints that line just before it
-# subscribes to the new owner's signals, so a switch made in between would be
-# missed; the tick (two seconds after start, then every minute) closes that
-# window and retries a read that failed. If a monitor exits, the service
-# fails and systemd restarts it.
+# profile is applied when gdbus reports the daemon's owner. gdbus prints that
+# line just before it subscribes to the owner's signals, so a switch made in
+# between would be missed; the tick (two seconds after start, then every
+# minute) closes that window and retries a read that failed. The service is
+# PartOf= the daemon, so a daemon restart restarts it with the new unique
+# name; if the daemon dies otherwise, or a monitor exits, the service fails
+# and systemd restarts it, and it then exits quietly if nothing is left.
 {
-  gdbus monitor --system --dest "$BUS" --object-path "$OBJ" &
+  gdbus monitor --system --dest "$owner" --object-path "$OBJ" &
   gdbus monitor --system --dest org.freedesktop.login1 --object-path /org/freedesktop/login1 &
   { sleep 2; echo reconcile; while sleep 60; do echo reconcile; done; } &
   wait -n
@@ -161,8 +166,12 @@ fi
     reconcile)
       apply_active 1
       ;;
-    "The name $BUS is owned by "*)
+    "The name $owner is owned by "*)
       apply_active
+      ;;
+    "The name $owner does not have an owner")
+      log "power-profiles-daemon ($owner) went away"
+      exit 1
       ;;
     *"'ActiveProfile': <'"*)
       prof=${line#*"'ActiveProfile': <'"}
