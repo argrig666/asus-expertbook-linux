@@ -1,0 +1,204 @@
+#!/usr/bin/env python3
+"""Click force and haptic intensity for the B9406CAA's PixArt 093A:4F05 pad.
+
+The pad is a Windows Precision Touchpad pressure pad. Two standard HID
+feature reports configure it:
+
+  report 8  Digitizer 0x0D / Button Press Threshold 0xB0, 1..3
+            (1 light, 2 medium, 3 firm)
+  report 9  Haptics 0x0E / Intensity 0x23, 0..100
+
+The firmware does not answer GET_FEATURE correctly, so this tool never reads
+the current values back; it only sends validated SET_FEATURE requests. The
+settings survive suspend but not a power-off, which is why a udev-triggered
+service restores the saved ones when the hidraw node appears.
+
+Before writing, the device must match HID_ID 0018:0000093A:00004F05 and the
+exact 964-byte report descriptor this was verified against. Anything else is
+refused rather than guessed at.
+
+The report layout and the per-setting behaviour were worked out in
+github.com/bramvera/omarchy-asus-expertbook-haptic-touchpad (MIT); this is
+an independent implementation.
+
+Usage:
+  touchpad-haptics status
+  touchpad-haptics set [--click-force 1|2|3|light|medium|firm]
+                       [--intensity 0-100] [--save]
+  touchpad-haptics restore      apply /etc/touchpad-haptics.conf (service)
+"""
+
+import argparse
+import fcntl
+import hashlib
+import os
+import sys
+from pathlib import Path
+
+HID_ID = "HID_ID=0018:0000093A:00004F05"
+DESCRIPTOR_SHA256 = "6f5470f0c99a355d00a380a4c3c0f5fd6fad1982ce2b18496a161172bdd297d4"
+CONF = Path(os.environ.get("TOUCHPAD_HAPTICS_CONF", "/etc/touchpad-haptics.conf"))
+CLICK_FORCE_REPORT = 8
+INTENSITY_REPORT = 9
+FORCE_NAMES = {"light": 1, "medium": 2, "firm": 3}
+
+
+def hidiocsfeature(size):
+    # _IOC(_IOC_WRITE | _IOC_READ, 'H', 0x06, size) from <linux/hidraw.h>
+    return (3 << 30) | (size << 16) | (ord("H") << 8) | 0x06
+
+
+def find_device():
+    """Return (/dev/hidrawN, None) for the verified pad, or (None, reason)."""
+    reason = "no PixArt 093A:4F05 hidraw device"
+    for node in sorted(Path("/sys/class/hidraw").glob("hidraw*")):
+        try:
+            uevent = (node / "device" / "uevent").read_text()
+        except OSError:
+            continue
+        if HID_ID not in uevent.splitlines():
+            continue
+        try:
+            digest = hashlib.sha256((node / "device" / "report_descriptor").read_bytes()).hexdigest()
+        except OSError as error:
+            return None, f"cannot read the report descriptor: {error}"
+        if digest != DESCRIPTOR_SHA256:
+            return None, (f"{node.name}: report descriptor {digest[:16]}... is not the verified "
+                          "revision; refusing to write")
+        return Path("/dev") / node.name, None
+    return None, reason
+
+
+def set_feature(device, report_id, value):
+    payload = bytearray((report_id, value))
+    fd = os.open(device, os.O_RDWR | os.O_CLOEXEC)
+    try:
+        sent = fcntl.ioctl(fd, hidiocsfeature(len(payload)), payload, True)
+    finally:
+        os.close(fd)
+    if sent != len(payload):
+        raise OSError(f"report {report_id}: sent {sent} of {len(payload)} bytes")
+
+
+def parse_force(text):
+    text = str(text).strip().lower()
+    if text in FORCE_NAMES:
+        return FORCE_NAMES[text]
+    if text in ("1", "2", "3"):
+        return int(text)
+    raise ValueError(f"click force must be 1-3 or light/medium/firm, not {text!r}")
+
+
+def parse_intensity(text):
+    value = int(str(text).strip(), 10)
+    if not 0 <= value <= 100:
+        raise ValueError(f"intensity must be 0-100, not {value}")
+    return value
+
+
+def read_conf():
+    settings = {}
+    if not CONF.exists():
+        return settings
+    for number, raw in enumerate(CONF.read_text().splitlines(), start=1):
+        line = raw.split("#", 1)[0].strip()
+        if not line:
+            continue
+        name, sep, value = line.partition("=")
+        name = name.strip().upper()
+        if not sep:
+            raise ValueError(f"{CONF}:{number}: expected NAME=VALUE")
+        if name == "CLICK_FORCE":
+            settings["click_force"] = parse_force(value)
+        elif name == "HAPTIC_INTENSITY":
+            settings["intensity"] = parse_intensity(value)
+        else:
+            raise ValueError(f"{CONF}:{number}: unknown setting {name}")
+    return settings
+
+
+def write_conf(settings):
+    lines = [
+        "# Written by touchpad-haptics. Restored when the touchpad appears.",
+        "# CLICK_FORCE: 1 light, 2 medium, 3 firm. HAPTIC_INTENSITY: 0-100.",
+    ]
+    if "click_force" in settings:
+        lines.append(f"CLICK_FORCE={settings['click_force']}")
+    if "intensity" in settings:
+        lines.append(f"HAPTIC_INTENSITY={settings['intensity']}")
+    tmp = CONF.with_name(CONF.name + ".tmp")
+    tmp.write_text("\n".join(lines) + "\n")
+    os.chmod(tmp, 0o644)
+    os.replace(tmp, CONF)
+
+
+def apply(settings):
+    device, reason = find_device()
+    if device is None:
+        raise RuntimeError(reason)
+    try:
+        if "click_force" in settings:
+            set_feature(device, CLICK_FORCE_REPORT, settings["click_force"])
+        if "intensity" in settings:
+            set_feature(device, INTENSITY_REPORT, settings["intensity"])
+    except PermissionError:
+        raise RuntimeError(f"cannot open {device}: run as root, or log in again after "
+                           "installing the module so the udev uaccess rule applies")
+    return device
+
+
+def main():
+    parser = argparse.ArgumentParser(prog="touchpad-haptics")
+    sub = parser.add_subparsers(dest="command", required=True)
+    sub.add_parser("status")
+    sub.add_parser("restore")
+    set_cmd = sub.add_parser("set")
+    set_cmd.add_argument("--click-force", type=parse_force)
+    set_cmd.add_argument("--intensity", type=parse_intensity)
+    set_cmd.add_argument("--save", action="store_true",
+                         help=f"also store the values in {CONF} (needs root)")
+    args = parser.parse_args()
+
+    try:
+        if args.command == "status":
+            device, reason = find_device()
+            print(f"device: {device if device else reason}")
+            saved = read_conf()
+            names = {v: k for k, v in FORCE_NAMES.items()}
+            force = saved.get("click_force")
+            print(f"saved click force: {f'{force} ({names[force]})' if force else 'not set'}")
+            print(f"saved intensity: {saved.get('intensity', 'not set')}")
+            print("current values: not readable (the firmware does not answer GET_FEATURE)")
+            return 0
+
+        if args.command == "restore":
+            saved = read_conf()
+            if not saved:
+                print(f"nothing saved in {CONF}; firmware defaults stay")
+                return 0
+            device = apply(saved)
+            print(f"restored {saved} on {device}")
+            return 0
+
+        settings = {}
+        if args.click_force is not None:
+            settings["click_force"] = args.click_force
+        if args.intensity is not None:
+            settings["intensity"] = args.intensity
+        if not settings:
+            parser.error("set needs --click-force and/or --intensity")
+        device = apply(settings)
+        print(f"applied {settings} on {device}")
+        if args.save:
+            merged = read_conf()
+            merged.update(settings)
+            write_conf(merged)
+            print(f"saved to {CONF}")
+        return 0
+    except (OSError, RuntimeError, ValueError) as error:
+        print(f"touchpad-haptics: {error}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

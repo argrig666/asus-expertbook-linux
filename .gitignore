@@ -13,3 +13,7 @@ Thumbs.db
 *.o
 *.so
 *.zst.tmp
+
+# Python bytecode
+__pycache__/
+*.pyc

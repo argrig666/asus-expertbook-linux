@@ -1,0 +1,8 @@
+# Installed by asus-expertbook-linux (touchpad-haptics).
+#
+# PixArt 093A:4F05 haptic touchpad on the ASUS ExpertBook Ultra B9406CAA:
+# - "uaccess" lets the logged-in user change click force and haptic intensity
+#   with `touchpad-haptics set` (applied by 73-seat-late.rules, hence 71-);
+# - the firmware forgets both at power-off, so the saved values are restored
+#   whenever the hidraw node appears.
+ACTION!="remove", SUBSYSTEM=="hidraw", KERNELS=="0018:093A:4F05.*", TAG+="uaccess", TAG+="systemd", ENV{SYSTEMD_WANTS}+="touchpad-haptics-restore.service"

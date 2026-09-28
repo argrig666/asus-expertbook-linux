@@ -1,0 +1,28 @@
+[Unit]
+Description=Restore touchpad click force and haptic intensity
+Documentation=https://github.com/burakgon/asus-expertbook-linux
+ConditionPathExists=/etc/touchpad-haptics.conf
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /usr/local/bin/touchpad-haptics restore
+
+NoNewPrivileges=yes
+ProtectHome=yes
+ProtectSystem=strict
+PrivateTmp=yes
+PrivateNetwork=yes
+ProtectControlGroups=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+RestrictAddressFamilies=AF_UNIX
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+CapabilityBoundingSet=
+DeviceAllow=char-hidraw rw
+DevicePolicy=closed
