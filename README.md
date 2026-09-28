@@ -821,7 +821,7 @@ asus-expertbook-linux/
 ├── webcam-ai-fix/  …
 ├── wifi-fix/  …
 ├── upstream-patches/           # accepted/pending upstream patches + tracker drafts
-│   └── 0001, 0003, 0004.patch, stable request, issue drafts
+│   └── 0001, 0003, 0004, 0005.patch, stable request, issue drafts
 ├── docs/                       # the GitHub Pages site
 └── scripts/
     └── check-hardware.sh       # one-shot compatibility check
@@ -902,10 +902,12 @@ pending and retired work:
 
 | # | Tree | Replaces |
 |---|---|---|
-| `0001` | Linux display | Not submittable as written: quirking off Panel Replay alone drops this panel into PSR2 + DSC garbage; a per-panel PSR1 quirk would be new work |
+| `0001` | Linux display (`intel_quirks.c`) | `display-fix`: pins this laptop to PSR1 through the existing Panel Replay (subsystem + sink OUI) and PSR2 (PCI ID) quirk tables. Not sent: tested through the equivalent module parameters, still needs one built-kernel test |
 | former `0002` | Linux sound | Removed: B9406CAA is not a sidecar-amplifier design |
-| `0003` | libinput | Pending PixArt pressure-axis quirk |
-| `0004` | Linux SoundWire | **Accepted** as upstream commit `90af3209742d`; retained for backports |
+| `0003` | libinput | `touchpad-fix`'s override: marks `093A:4F05` as a pressure pad (`INPUT_PROP_PRESSUREPAD`), as upstream did for `4811`. Not sent: needs an on-device test |
+| `0004` | Linux SoundWire | **Accepted** as upstream commit `90af3209742d` (Linux 7.3); retained for backports, stable request for 7.2.y drafted |
+| `0005` | power-profiles-daemon | `power-profile-bridge`'s drop-in: stops an emulated power-saver from switching itself back to balanced. Not sent; its new test fails on main and the suite passes with it |
+| drafts | drm/xe, libdisplay-info, Arch | The drm/xe issue for `0001`, a confidential libdisplay-info report for the DisplayID v2 overread fixed in `hdr-fix`, and a request for Arch to ship libdisplay-info 0.4.0 |
 
 See the tracking notes for current applicability against `torvalds/linux` /
 `drm-intel-next` / libinput main. See

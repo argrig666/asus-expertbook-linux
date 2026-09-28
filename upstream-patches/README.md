@@ -2,7 +2,8 @@
 
 Tracking and backport material for the ASUS ExpertBook Ultra B9406CAA: one fix
 already in Linus' tree plus a stable-backport request for it, a display quirk
-patch and issue draft, a libinput quirk, and a packaging request that would make
+patch and issue draft, a libinput quirk, a power-profiles-daemon fix, a
+libdisplay-info memory-safety report, and a packaging request that would make
 `hdr-fix` unnecessary. One proposed audio quirk turned out to be invalid.
 
 Status rechecked on 2026-09-28 against `torvalds/linux` 7.3-rc5, the 7.2.8 and
@@ -82,6 +83,23 @@ panel drops `xe` into PSR2 selective update over DSC and paints garbage. The
 VSC SDP readout false positive that 7.2 logs on HDR modesets is fixed upstream
 by `fd2e337ba66f` ("drm/i915/dp: Handle VSC SDP revision 7 in unpack", in
 drm-intel-next for 7.4).
+
+### `0005-platform-profile-Don-t-read-an-emulated-power-saver-.patch`
+
+- **Tree:** `upower/power-profiles-daemon` → `src/ppd-driver-platform-profile.c`
+  plus an integration test (applies to main `09eeb34`)
+- **Where to send:** GitLab merge request, text drafted in
+  [`ppd-emulated-power-saver.md`](ppd-emulated-power-saver.md); related to
+  [#187](https://gitlab.freedesktop.org/upower/power-profiles-daemon/-/issues/187).
+- **What it does:** when the legacy `platform_profile_choices` lack a low-power
+  option (on this laptop: `balanced performance`, the choices the SoC Power
+  Slider and asus-wmi share), power-saver is emulated by writing `balanced`.
+  The daemon then reads its own write back as a switch to balanced, so
+  performance → power-saver lands on balanced. The patch ignores that read-back.
+- **Status:** not sent. The new test fails on main every time and passes with
+  the fix; full suite 129/129.
+- **Local replacement:** `power-profile-bridge` (starts the daemon with
+  `--block-driver=platform_profile`).
 
 ## Drafts for other trackers
 

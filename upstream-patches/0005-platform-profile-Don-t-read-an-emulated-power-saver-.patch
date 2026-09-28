@@ -1,0 +1,127 @@
+From 90d11c14006b9550c83f20c8759a90e81d50db97 Mon Sep 17 00:00:00 2001
+From: burakgon <burakgon12@gmail.com>
+Date: Mon, 28 Sep 2026 20:51:25 +0300
+Subject: [PATCH] platform-profile: Don't read an emulated power-saver back as
+ balanced
+
+Without a "low-power", "quiet" or "cool" platform_profile choice,
+power-saver is emulated by writing "balanced". activate_profile() blocks
+the file monitor's "changed" handler around that write, but GFileMonitor
+only dispatches the event later from the main loop, after the handler
+has been unblocked again. update_acpi_platform_profile_state() then
+reads "balanced" back, sees that it differs from the power-saver profile
+that was just stored, and emits profile-changed, so the daemon switches
+itself to balanced (reason 'internal') right after power-saver was
+selected.
+
+This only happens when coming from performance: from balanced there is
+nothing to write, so there is no event either. It is hit on machines
+whose legacy platform_profile_choices lack a low-power option, e.g. when
+several platform profile handlers are registered and the legacy file
+only lists the choices they all share, "balanced performance".
+
+Don't treat reading "balanced" back while emulating power-saver as a
+profile change. Changes to any other profile are still followed.
+
+Commit 3b8066c5 ("Fix handling for hp-wmi") fixed the HP laptops from
+the issue below by mapping their "cool" choice to power-saver, but the
+generic emulation path still had the same problem.
+
+Related: #187
+---
+ src/ppd-driver-platform-profile.c |  7 ++++
+ tests/integration_test.py         | 60 +++++++++++++++++++++++++++++++
+ 2 files changed, 67 insertions(+)
+
+diff --git a/src/ppd-driver-platform-profile.c b/src/ppd-driver-platform-profile.c
+index 61370d9..1748bb1 100644
+--- a/src/ppd-driver-platform-profile.c
++++ b/src/ppd-driver-platform-profile.c
+@@ -192,6 +192,13 @@ update_acpi_platform_profile_state (PpdDriverPlatformProfile *self)
+       new_profile == self->acpi_platform_profile)
+     return;
+ 
++  /* Without a low-power choice, power-saver is emulated by writing
++   * "balanced". Reading that back is our own write, not a switch. */
++  if (!self->has_low_power &&
++      self->acpi_platform_profile == PPD_PROFILE_POWER_SAVER &&
++      new_profile == PPD_PROFILE_BALANCED)
++    return;
++
+   self->acpi_platform_profile = new_profile;
+   ppd_driver_emit_profile_changed (PPD_DRIVER (self), new_profile);
+ }
+diff --git a/tests/integration_test.py b/tests/integration_test.py
+index d836886..79177f5 100644
+--- a/tests/integration_test.py
++++ b/tests/integration_test.py
+@@ -1993,6 +1993,66 @@ class Tests(dbusmock.DBusTestCase):
+             self.read_sysfs_file("sys/firmware/acpi/platform_profile"), b"quiet"
+         )
+ 
++    def test_emulated_power_saver(self):
++        # No low-power, quiet or cool choice, so power-saver is emulated
++        acpi_dir = os.path.join(self.testbed.get_root_dir(), "sys/firmware/acpi/")
++        os.makedirs(acpi_dir)
++        platform_profile = os.path.join(acpi_dir, "platform_profile")
++        self.write_file_contents(platform_profile, "performance\n")
++        self.write_file_contents(
++            os.path.join(acpi_dir, "platform_profile_choices"),
++            "balanced performance\n",
++        )
++
++        self.start_daemon()
++        profiles = self.get_dbus_property("Profiles")
++        self.assertEqual(len(profiles), 3)
++        self.assertEqual(profiles[0]["Driver"], "platform_profile")
++        self.assertEqual(profiles[0]["PlatformDriver"], "platform_profile")
++        self.assertEqual(profiles[0]["Profile"], "power-saver")
++
++        self.set_dbus_property("ActiveProfile", GLib.Variant.new_string("performance"))
++        self.assertEqual(self.get_dbus_property("ActiveProfile"), "performance")
++        self.assertEqual(
++            self.read_sysfs_file("sys/firmware/acpi/platform_profile"), b"performance"
++        )
++
++        # Emulating power-saver writes "balanced", and the file monitor reading
++        # that back later must not be taken as a switch to balanced
++        read_back = "ACPI performance_profile is now 'balanced'"
++        count = self.count_text_in_log(read_back)
++        self.set_dbus_property("ActiveProfile", GLib.Variant.new_string("power-saver"))
++        self.assertEqual(
++            self.read_sysfs_file("sys/firmware/acpi/platform_profile"), b"balanced"
++        )
++        self.assert_eventually(lambda: self.count_text_in_log(read_back) > count)
++        self.assert_dbus_property_eventually_is(
++            "ActiveProfile", "power-saver", keep_checking=1000
++        )
++        self.assertEqual(
++            self.read_sysfs_file("sys/firmware/acpi/platform_profile"), b"balanced"
++        )
++
++        self.set_dbus_property("ActiveProfile", GLib.Variant.new_string("balanced"))
++        self.assertEqual(self.get_dbus_property("ActiveProfile"), "balanced")
++        self.assertEqual(
++            self.read_sysfs_file("sys/firmware/acpi/platform_profile"), b"balanced"
++        )
++
++        self.set_dbus_property("ActiveProfile", GLib.Variant.new_string("performance"))
++        self.assertEqual(self.get_dbus_property("ActiveProfile"), "performance")
++        self.assertEqual(
++            self.read_sysfs_file("sys/firmware/acpi/platform_profile"), b"performance"
++        )
++
++        # External changes are still followed while emulating power-saver
++        count = self.count_text_in_log(read_back)
++        self.set_dbus_property("ActiveProfile", GLib.Variant.new_string("power-saver"))
++        self.assert_eventually(lambda: self.count_text_in_log(read_back) > count)
++        self.assertEqual(self.get_dbus_property("ActiveProfile"), "power-saver")
++        self.write_file_contents(platform_profile, "performance\n")
++        self.assert_dbus_property_eventually_is("ActiveProfile", "performance")
++
+     def test_custom_acpi_platform_profile(self):
+         self.create_custom_platform_profile()
+         self.start_daemon()
+-- 
+2.55.0
+
