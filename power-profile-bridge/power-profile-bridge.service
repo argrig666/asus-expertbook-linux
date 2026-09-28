@@ -1,8 +1,9 @@
 [Unit]
 Description=Apply the power profile to every platform-profile handler
 Documentation=https://github.com/burakgon/asus-expertbook-linux
+# Ordered after the daemon but never pulls it in: its unit conflicts with TLP
+# and tuned. The bridge exits quietly when the daemon is not running.
 After=power-profiles-daemon.service
-Wants=power-profiles-daemon.service
 ConditionPathExistsGlob=/sys/class/platform-profile/platform-profile-*
 
 [Service]
@@ -12,7 +13,7 @@ ExecStart=/usr/local/bin/power-profile-bridge
 # reading "custom" once the bridge is gone.
 # ($$ is a literal $ in unit files.)
 ExecStopPost=/bin/sh -c 'f=/sys/firmware/acpi/platform_profile; [ "$$(cat $$f 2>/dev/null)" = custom ] && echo balanced >$$f || true'
-Restart=always
+Restart=on-failure
 RestartSec=5
 
 # Needs: the system D-Bus and writes to /sys/class/platform-profile.

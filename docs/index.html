@@ -1307,11 +1307,12 @@ legacy platform_profile: custom
 SoC Power Slider: low-power (choices: low-power balanced performance; wants low-power)
 asus-wmi: quiet (choices: quiet balanced performance; wants quiet)</code></pre>
         <p>
-          It needs power-profiles-daemon (KDE's default) or another owner of
-          <code>org.freedesktop.UPower.PowerProfiles</code>; with TLP there is
-          no <code>ActiveProfile</code> to follow and the service does nothing.
-          Hotkeys that change the platform profile behind the daemon's back
-          no longer show in the applet. The xe GPU's own
+          It needs power-profiles-daemon (KDE's default), running: install
+          refuses while TLP, tuned, auto-cpufreq or system76-power is active,
+          and the service never starts the daemon itself (its unit conflicts
+          with those). The bridge also re-applies once a minute. Hotkeys that
+          change the platform profile behind the daemon's back no longer show
+          in the applet. The xe GPU's own
           <code>power_profile</code> is left untouched. See
           <a href="https://github.com/burakgon/asus-expertbook-linux/blob/main/power-profile-bridge/README.md"><code>power-profile-bridge/README.md</code></a>.
         </p>

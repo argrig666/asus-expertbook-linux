@@ -61,11 +61,14 @@ the first time its drivers change, so the module puts your current profile
 back after restarting it.
 
 The bridge sets every profile, not only power-saver, and re-applies after
-resume and whenever power-profiles-daemon (re)appears on the bus. Stopping the
+resume, whenever power-profiles-daemon (re)appears on the bus, and once a
+minute, which also puts back a handler someone changed by hand. Stopping the
 service puts both handlers back on `balanced` if they were left disagreeing.
-With a power-profiles-daemon too old for `--block-driver`, the module warns
-and installs the bridge alone: power-saver then works when reached from
-balanced, not straight from performance.
+The drop-in keeps any other arguments the daemon's command line already had;
+if a later drop-in overrides `ExecStart`, install stops instead of claiming
+the driver is off. With a power-profiles-daemon too old for `--block-driver`,
+the module warns and installs the bridge alone: power-saver then works when
+reached from balanced, not straight from performance.
 
 The mapping is generic: for each handler, power-saver picks `low-power`, then
 `quiet`, `cool`, `balanced`; performance picks `performance`, then
@@ -104,9 +107,11 @@ your current profile. `/etc/power-profile-bridge.conf` is left in place.
 
 ## Scope
 
-- Needs power-profiles-daemon (KDE's default), or anything else that owns
-  `org.freedesktop.UPower.PowerProfiles`. With TLP instead there is no
-  `ActiveProfile` to follow and the service does nothing.
+- Needs power-profiles-daemon (KDE's default), running. Install refuses while
+  TLP, tuned, tuned-ppd, auto-cpufreq or system76-power is active, since the
+  daemon's unit conflicts with them. The service never starts the daemon
+  itself (no `Wants=`, no D-Bus auto-start) and exits quietly when it is not
+  running, so switching to TLP later is safe; uninstall the module then.
 - Hotkeys or tools that change the platform profile behind the daemon's back
   are no longer reflected in the KDE applet, because the daemon's platform
   driver is off.

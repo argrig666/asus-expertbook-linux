@@ -90,24 +90,29 @@ apply() {
   done < <(handlers)
 }
 
+# --auto-start=no: a stopped power-profiles-daemon must stay stopped. D-Bus
+# activation would start it, and its unit conflicts with TLP and tuned.
 active_profile() {
-  busctl get-property "$BUS" "$OBJ" "$BUS" ActiveProfile 2>/dev/null |
+  busctl --auto-start=no get-property "$BUS" "$OBJ" "$BUS" ActiveProfile 2>/dev/null |
     sed -n 's/^s "\(.*\)"$/\1/p'
 }
 
-# Apply what power-profiles-daemon reports now, giving it a few seconds when
-# it has only just started.
+# Apply what power-profiles-daemon reports now. $1 is the number of reads to
+# try a second apart (it may have only just started); with one, a failure is
+# silent because the next reconcile tries again.
 apply_active() {
-  local prof tries=5
+  local prof tries=${1:-5} quiet=0
+  (( tries == 1 )) && quiet=1
   while (( tries-- > 0 )); do
     prof=$(active_profile)
     if [[ -n $prof ]]; then
       apply "$prof"
       return 0
     fi
-    sleep 1
+    (( tries > 0 )) && sleep 1
   done
-  log "power-profiles-daemon did not report its active profile"
+  (( quiet )) || log "power-profiles-daemon did not report its active profile"
+  return 0
 }
 
 status() {
@@ -128,23 +133,34 @@ case ${1:-} in
   *)        echo "usage: $0 [--status | --apply PROFILE]" >&2; exit 2 ;;
 esac
 
-# One stream for both sources: profile changes from power-profiles-daemon and
-# logind's PrepareForSleep(false) after resume. If either monitor exits, the
-# service ends and systemd restarts it.
-#
-# The profile is read only once gdbus reports that the daemon's name has an
-# owner. gdbus asks for the owner after subscribing to the signals, and the bus
-# answers in order, so a switch made at any point after that read still
-# arrives as a signal. The same line comes back whenever power-profiles-daemon
-# restarts, which re-applies its profile then too.
+# gdbus monitor asks D-Bus to start the name it watches. Only follow a
+# power-profiles-daemon that is already running, so a machine that switched to
+# TLP or tuned is left alone; exiting 0 keeps systemd from restarting us.
+if ! systemctl is-active --quiet power-profiles-daemon.service; then
+  log "power-profiles-daemon is not running; nothing to follow"
+  exit 0
+fi
+
+# One stream for three sources: profile changes from power-profiles-daemon,
+# logind's PrepareForSleep(false) after resume, and a reconcile tick. The
+# profile is applied whenever the daemon's name gets an owner (at start and
+# after every daemon restart). gdbus prints that line just before it
+# subscribes to the new owner's signals, so a switch made in between would be
+# missed; the tick (two seconds after start, then every minute) closes that
+# window and retries a read that failed. If a monitor exits, the service
+# fails and systemd restarts it.
 {
   gdbus monitor --system --dest "$BUS" --object-path "$OBJ" &
   gdbus monitor --system --dest org.freedesktop.login1 --object-path /org/freedesktop/login1 &
+  { sleep 2; echo reconcile; while sleep 60; do echo reconcile; done; } &
   wait -n
-  # shellcheck disable=SC2046 # one word per remaining monitor PID
+  # shellcheck disable=SC2046 # one word per remaining job PID
   kill $(jobs -p)
 } 2>/dev/null | while IFS= read -r line; do
   case $line in
+    reconcile)
+      apply_active 1
+      ;;
     "The name $BUS is owned by "*)
       apply_active
       ;;
@@ -157,3 +173,4 @@ esac
       ;;
   esac
 done
+exit 1

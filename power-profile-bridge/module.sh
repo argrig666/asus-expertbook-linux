@@ -42,26 +42,33 @@ _ppb_dropin=/etc/systemd/system/power-profiles-daemon.service.d/50-asus-expertbo
 _ppb_bus=org.freedesktop.UPower.PowerProfiles
 _ppb_obj=/org/freedesktop/UPower/PowerProfiles
 
-# The daemon binary as its unit starts it (/usr/lib on Arch, /usr/libexec on
-# other distributions).
-_ppb_ppd_binary() {
-  local p
-  p="$(systemctl show -P ExecStart power-profiles-daemon.service 2>/dev/null |
-    sed -n 's/^{ path=\([^ ;]*\) ;.*/\1/p')"
-  [[ -n $p && -x $p ]] || return 1
-  printf '%s\n' "$p"
+# The daemon's effective command line, as systemd would run it now.
+_ppb_ppd_argv() {
+  systemctl show -P ExecStart power-profiles-daemon.service 2>/dev/null |
+    sed -n 's/^{ path=[^;]* ; argv\[\]=\([^;]*\) ;.*/\1/p' | head -n1
 }
 
-# True when the daemon's effective command line blocks its platform driver
-# (a later drop-in could still override ours).
+# True when that command line blocks the daemon's platform driver.
 _ppb_ppd_blocked() {
-  systemctl show -P ExecStart power-profiles-daemon.service 2>/dev/null |
-    grep -q -- '--block-driver=platform_profile'
+  [[ " $(_ppb_ppd_argv) " == *" --block-driver=platform_profile "* ]]
 }
 
 _ppb_get_profile() {
-  busctl get-property "$_ppb_bus" "$_ppb_obj" "$_ppb_bus" ActiveProfile 2>/dev/null |
+  busctl --auto-start=no get-property "$_ppb_bus" "$_ppb_obj" "$_ppb_bus" ActiveProfile 2>/dev/null |
     sed -n 's/^s "\(.*\)"$/\1/p'
+}
+
+# The bridge follows power-profiles-daemon only. Its unit conflicts with these,
+# so refuse before changing anything rather than start it over them.
+_ppb_require_ppd() {
+  local u
+  for u in tlp.service tuned.service tuned-ppd.service auto-cpufreq.service system76-power.service; do
+    if systemctl is-active --quiet "$u" 2>/dev/null; then
+      die "[power-profile-bridge] $u is running; the bridge works with power-profiles-daemon only"
+    fi
+  done
+  systemctl is-active --quiet power-profiles-daemon.service ||
+    die "[power-profile-bridge] power-profiles-daemon is not running (KDE's default; enable it with: systemctl enable --now power-profiles-daemon)"
 }
 
 # Restart power-profiles-daemon and keep the user's profile. The daemon does
@@ -74,23 +81,27 @@ _ppb_restart_ppd() {
   systemctl restart power-profiles-daemon.service ||
     die "[power-profile-bridge] power-profiles-daemon did not restart"
   if [[ -n $prev && $(_ppb_get_profile) != "$prev" ]]; then
-    busctl set-property "$_ppb_bus" "$_ppb_obj" "$_ppb_bus" ActiveProfile s "$prev" ||
+    busctl --auto-start=no set-property "$_ppb_bus" "$_ppb_obj" "$_ppb_bus" ActiveProfile s "$prev" ||
       warn "[power-profile-bridge] could not switch back to $prev; pick it again in the battery applet"
   fi
 }
 
+# Start the daemon with --block-driver=platform_profile, keeping every other
+# argument its effective command line already has.
 _ppb_install_dropin() {
-  local ppd content
-  if ! ppd="$(_ppb_ppd_binary)"; then
-    warn "[power-profile-bridge] power-profiles-daemon.service not found; the bridge follows whatever"
-    warn "[power-profile-bridge] provides org.freedesktop.UPower.PowerProfiles, if anything"
-    return 0
-  fi
-  if ! "$ppd" --help-all 2>/dev/null | grep -q -- --block-driver; then
-    warn "[power-profile-bridge] $ppd has no --block-driver option: switching from performance"
+  local argv w content
+  local -a words=() keep=()
+  argv="$(_ppb_ppd_argv)"
+  [[ -n $argv ]] || die "[power-profile-bridge] cannot read ExecStart of power-profiles-daemon.service"
+  read -ra words <<<"$argv"
+  if ! "${words[0]}" --help-all 2>/dev/null | grep -q -- --block-driver; then
+    warn "[power-profile-bridge] ${words[0]} has no --block-driver option: switching from performance"
     warn "[power-profile-bridge] straight to power-saver will still fall back to balanced"
     return 0
   fi
+  for w in "${words[@]}"; do
+    [[ $w == --block-driver=platform_profile ]] || keep+=("$w")
+  done
   content="# Installed by asus-expertbook-linux (power-profile-bridge).
 # power-profile-bridge writes every platform-profile handler itself. The
 # daemon's platform_profile driver would emulate power-saver by writing
@@ -98,17 +109,23 @@ _ppb_install_dropin() {
 # its CPU (EPP) driver stays on.
 [Service]
 ExecStart=
-ExecStart=$ppd --block-driver=platform_profile"
-  if [[ -f $_ppb_dropin && "$(cat "$_ppb_dropin")" == "$content" ]]; then
-    return 0
+ExecStart=${keep[*]} --block-driver=platform_profile"
+  if [[ ! -f $_ppb_dropin || "$(cat "$_ppb_dropin")" != "$content" ]]; then
+    install -d -m 0755 "${_ppb_dropin%/*}" || die "[power-profile-bridge] cannot create ${_ppb_dropin%/*}"
+    printf '%s\n' "$content" >"$_ppb_dropin" || die "[power-profile-bridge] cannot write $_ppb_dropin"
+    log "[power-profile-bridge] power-profiles-daemon: platform_profile driver off ($_ppb_dropin)"
+    systemctl daemon-reload
   fi
-  install -d -m 0755 "${_ppb_dropin%/*}" || die "[power-profile-bridge] cannot create ${_ppb_dropin%/*}"
-  printf '%s\n' "$content" >"$_ppb_dropin" || die "[power-profile-bridge] cannot write $_ppb_dropin"
-  log "[power-profile-bridge] power-profiles-daemon: platform_profile driver off ($_ppb_dropin)"
-  systemctl daemon-reload
-  _ppb_ppd_blocked ||
-    warn "[power-profile-bridge] another drop-in overrides ExecStart of power-profiles-daemon; add --block-driver=platform_profile there"
-  _ppb_restart_ppd
+  if ! _ppb_ppd_blocked; then
+    rm -f -- "$_ppb_dropin"
+    systemctl daemon-reload
+    die "[power-profile-bridge] another drop-in overrides ExecStart of power-profiles-daemon; add --block-driver=platform_profile there"
+  fi
+  # Restart only when the running daemon still has its platform driver.
+  if ! tr '\0' ' ' </proc/"$(systemctl show -P MainPID power-profiles-daemon.service)"/cmdline 2>/dev/null |
+       grep -q -- '--block-driver=platform_profile'; then
+    _ppb_restart_ppd
+  fi
 }
 
 _ppb_remove_dropin() {
@@ -121,6 +138,7 @@ _ppb_remove_dropin() {
 }
 
 module_post_install() {
+  _ppb_require_ppd
   chmod 0755 /usr/local/bin/power-profile-bridge
 
   if [[ -e $_ppb_conf ]]; then
