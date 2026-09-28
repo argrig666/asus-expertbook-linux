@@ -1,7 +1,8 @@
 # ASUS ExpertBook Ultra (B9406CAA) PixArt I2C-HID haptic touchpad (093A:4F05)
-# The kernel-reported pressure max (2601, identical to Y-axis max) makes
-# libinput's pressure heuristics misbehave and reject every touch as a jump.
-# Clamping to 100 is a known-working empirical value.
+# The pad's HID report descriptor gives Tip Pressure no Logical Maximum of its
+# own, so the kernel reports the Y field's 2601 as the pressure maximum and
+# libinput's pressure heuristics reject every touch as a jump. Clamping to 100
+# is a known-working empirical value; the libinput quirk alone is sufficient.
 evdev:input:b0018v093Ap4F05*
  EVDEV_ABS_18=0:100:0:0
  EVDEV_ABS_3A=0:100:0:0

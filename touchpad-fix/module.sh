@@ -15,22 +15,106 @@
 
 MODULE_NAME="touchpad-fix"
 MODULE_DESC="ASUS ExpertBook Ultra (B9406CAA) PixArt 093A:4F05 touchpad workaround"
-MODULE_VERSION="1.1.1"
+MODULE_VERSION="1.2.0"
 
 # The libinput quirk is the load-bearing fix; the hwdb clamp is optional
 # belt-and-suspenders (verified: quirk alone stops the Touch-jumps even with
-# pressure max still misreported). Both ship in the module anyway.
+# pressure max still misreported).
 #
-# NOTE: libinput 1.31 only honors '/etc/libinput/local-overrides.quirks' for
-# admin overrides — arbitrary *.quirks files in that directory are silently
-# ignored (only /usr/share/libinput/*.quirks gets globbed). So the source
-# file ships with a descriptive name but installs to the canonical name.
+# libinput reads admin overrides only from /etc/libinput/local-overrides.quirks
+# (other *.quirks files in /etc/libinput are ignored), and that one file is
+# shared with every other override on the machine. Up to 1.1.1 this module
+# replaced it wholesale. The quirk now lives in a marked block inside it:
+# install drops earlier B9406 touchpad sections (the 1.1.x copy and
+# Omarchy-derived ones) and keeps every other section; uninstall removes only
+# the block.
 MODULE_FILES=(
   "61-pixart-4f05-pressure-fix.hwdb:/etc/udev/hwdb.d/61-pixart-4f05-pressure-fix.hwdb"
-  "99-asus-expertbook-pixart-4f05.quirks:/etc/libinput/local-overrides.quirks"
 )
 
+TP_QUIRKS=/etc/libinput/local-overrides.quirks
+TP_QUIRK_SRC=99-asus-expertbook-pixart-4f05.quirks
+TP_BEGIN="# >>> asus-expertbook-linux touchpad-fix >>>"
+TP_END="# <<< asus-expertbook-linux touchpad-fix <<<"
+
+# Print file $1 without our managed block and without earlier B9406 touchpad
+# sections. Key lines of a stale section are dropped up to the next [header],
+# never left outside a section, which would make libinput reject the whole
+# file. Comment and blank lines are held back until the next line decides
+# whom they describe: a stale header (dropped with it) or anything else (kept).
+_tp_strip() {
+  awk -v b="$TP_BEGIN" -v e="$TP_END" '
+    function flush() { if (buf != "") printf "%s", buf; buf = "" }
+    $0 == b { inblock = 1; buf = ""; next }
+    $0 == e { inblock = 0; next }
+    inblock { next }
+    /^[[:space:]]*(#.*)?$/ { buf = buf $0 "\n"; next }
+    /^\[/ {
+      if ($0 ~ /^\[ASUS ExpertBook (Ultra )?B9406 Touchpad\]$/) { legacy = 1; buf = ""; next }
+      legacy = 0; flush(); print; next
+    }
+    legacy { buf = ""; next }
+    { flush(); print }
+    END { if (!legacy) flush() }
+  ' "$1"
+}
+
+# True when $1 holds anything besides comments and blank lines.
+_tp_has_content() {
+  grep -qv -E '^[[:space:]]*(#.*)?$' <<<"$1"
+}
+
+_tp_write() {
+  local content="$1"
+  install -d -m 0755 "${TP_QUIRKS%/*}"
+  printf '%s\n' "$content" >"$TP_QUIRKS.tmp"
+  chmod 0644 "$TP_QUIRKS.tmp"
+  mv -f -- "$TP_QUIRKS.tmp" "$TP_QUIRKS"
+}
+
+_tp_install_quirk() {
+  local rest="" block
+  [[ -f $TP_QUIRKS ]] && rest="$(_tp_strip "$TP_QUIRKS")"
+  block="$(printf '%s\n' "$TP_BEGIN"; cat "$TP_QUIRK_SRC"; printf '%s' "$TP_END")"
+  if _tp_has_content "$rest"; then
+    _tp_write "$rest"$'\n\n'"$block"
+  else
+    _tp_write "$block"
+  fi
+  log "[touchpad-fix] quirk block written to $TP_QUIRKS"
+}
+
+_tp_remove_quirk() {
+  local rest
+  [[ -f $TP_QUIRKS ]] || return 0
+  rest="$(_tp_strip "$TP_QUIRKS")"
+  if _tp_has_content "$rest"; then
+    _tp_write "$rest"
+  else
+    rm -f -- "$TP_QUIRKS"
+  fi
+}
+
+module_install_state() {
+  local files installed block=0
+  grep -qxF "$TP_BEGIN" "$TP_QUIRKS" 2>/dev/null && block=1
+  files="$(mod_files_state)"
+  installed="$(mod_get_installed_version)"
+  if [[ -n $installed && $installed != "$MODULE_VERSION" ]]; then
+    echo update-available
+  elif [[ $files == none ]] && (( ! block )); then
+    echo not-installed
+  elif [[ $files != all ]] || (( ! block )); then
+    echo partial
+  elif [[ -z $installed ]]; then
+    echo untracked
+  else
+    echo up-to-date
+  fi
+}
+
 module_post_install() {
+  _tp_install_quirk
   systemd-hwdb update
   udevadm trigger --action=change --subsystem-match=input >/dev/null 2>&1 || true
   udevadm settle --timeout=3 >/dev/null 2>&1 || true
@@ -38,6 +122,7 @@ module_post_install() {
 }
 
 module_post_uninstall() {
+  _tp_remove_quirk
   systemd-hwdb update
   udevadm trigger --action=change --subsystem-match=input >/dev/null 2>&1 || true
   udevadm settle --timeout=3 >/dev/null 2>&1 || true
@@ -46,6 +131,15 @@ module_post_uninstall() {
 
 module_status_extra() {
   local ev
+  if grep -qxF "$TP_BEGIN" "$TP_QUIRKS" 2>/dev/null; then
+    printf '  quirk:    %smanaged block in %s%s\n' "$c_ok" "$TP_QUIRKS" "$c_off"
+  elif grep -qE '^\[ASUS ExpertBook (Ultra )?B9406 Touchpad\]$' "$TP_QUIRKS" 2>/dev/null; then
+    printf '  quirk:    %sunmanaged B9406 section in %s; reinstall to convert it%s\n' \
+      "$c_warn" "$TP_QUIRKS" "$c_off"
+  else
+    printf '  quirk:    %snot present in %s%s\n' "$c_warn" "$TP_QUIRKS" "$c_off"
+  fi
+
   ev="$(awk '
     /^I:/ { i=$0; n="" }
     /^N:/ { n=$0 }
@@ -65,11 +159,15 @@ module_status_extra() {
     return 0
   fi
 
+  # Listing active quirks opens the device node, which needs root.
   local out
   if [[ $EUID -eq 0 ]]; then
     out="$(libinput quirks list "/dev/input/$ev" 2>/dev/null || true)"
-  else
+  elif sudo -n true 2>/dev/null; then
     out="$(sudo -n libinput quirks list "/dev/input/$ev" 2>/dev/null || true)"
+  else
+    printf '  libinput: %srun status as root to list the active quirks%s\n' "$c_dim" "$c_off"
+    return 0
   fi
   if [[ -z $out ]]; then
     printf '  libinput: %sno quirks active for this device%s\n' "$c_warn" "$c_off"

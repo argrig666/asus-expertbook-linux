@@ -1,10 +1,11 @@
 # ASUS ExpertBook Ultra (B9406CAA) — touchpad fix on Linux
 
-PixArt I2C-HID haptic touchpad `093A:4F05` (ACPI ID `ASCP1D80`) does not work
-on Linux kernels 6.18+ (haptic-touchpad parser landed via `CONFIG_HID_HAPTIC`).
-The kernel reports a bogus `ABS_MT_PRESSURE` max (2601, identical to the
-Y-axis max), and libinput discards every motion as a `kernel bug: Touch jump
-detected and discarded`, so the cursor never moves.
+PixArt I2C-HID haptic touchpad `093A:4F05` (ACPI ID `ASCP1D80`) does not move
+the cursor out of the box. The pad's HID report descriptor gives Tip Pressure
+no Logical Maximum of its own, so it inherits the Y field's 2601, and the
+kernel reports that as the `ABS_MT_PRESSURE` maximum. Real presses sit far
+below it, so libinput discards every motion as
+`kernel bug: Touch jump detected and discarded`.
 
 Confirmed reproducible on:
 
@@ -17,7 +18,14 @@ Confirmed reproducible on:
 | File | Install path | What it does |
 |---|---|---|
 | `61-pixart-4f05-pressure-fix.hwdb` | `/etc/udev/hwdb.d/` | Clamps `ABS_PRESSURE` and `ABS_MT_PRESSURE` axes to 0:100 so libinput's pressure heuristics see sane values. |
-| `99-asus-expertbook-pixart-4f05.quirks` | `/etc/libinput/` | Tells libinput to ignore both pressure axes entirely (pattern borrowed from the shipped Asus UX302LA quirk). |
+| `99-asus-expertbook-pixart-4f05.quirks` | managed block in `/etc/libinput/local-overrides.quirks` | Tells libinput to ignore both pressure axes entirely (pattern borrowed from the shipped Asus UX302LA quirk). |
+
+libinput reads admin overrides only from `/etc/libinput/local-overrides.quirks`;
+any other `*.quirks` file in `/etc/libinput` is ignored. That file is shared
+with every other override on the machine, so since 1.2.0 the module writes a
+marked block into it instead of replacing it. Install drops earlier B9406
+touchpad sections (the 1.1.x copy and Omarchy-derived ones) and keeps every
+other section; uninstall removes only the block.
 
 The libinput quirk is the load-bearing fix and is sufficient on its own
 (verified on the reference machine: the hwdb clamp is **not** installed, the
@@ -29,8 +37,16 @@ but it is not required.
 ## Install
 
 ```sh
-sudo cp 61-pixart-4f05-pressure-fix.hwdb       /etc/udev/hwdb.d/
-sudo cp 99-asus-expertbook-pixart-4f05.quirks  /etc/libinput/
+./patch.sh install touchpad-fix
+sudo reboot
+```
+
+By hand, append the section to the one file libinput reads (a copy under any
+other name in `/etc/libinput` is silently ignored):
+
+```sh
+sudo cp 61-pixart-4f05-pressure-fix.hwdb /etc/udev/hwdb.d/
+cat 99-asus-expertbook-pixart-4f05.quirks | sudo tee -a /etc/libinput/local-overrides.quirks
 sudo systemd-hwdb update
 sudo reboot
 ```
@@ -52,11 +68,14 @@ sudo evtest /dev/input/event9 | grep -A 3 'ABS_MT_PRESSURE'
 ## Uninstall
 
 ```sh
-sudo rm /etc/udev/hwdb.d/61-pixart-4f05-pressure-fix.hwdb
-sudo rm /etc/libinput/99-asus-expertbook-pixart-4f05.quirks
-sudo systemd-hwdb update
+./patch.sh uninstall touchpad-fix
 sudo reboot
 ```
+
+By hand: delete `/etc/udev/hwdb.d/61-pixart-4f05-pressure-fix.hwdb`, remove the
+`[ASUS ExpertBook Ultra B9406 Touchpad]` section from
+`/etc/libinput/local-overrides.quirks`, run `sudo systemd-hwdb update` and
+reboot.
 
 ## Diagnosis trail (for upstream bug reports)
 
@@ -67,13 +86,20 @@ sudo reboot
 - libinput log lines while broken:
   `Libinput: event9 - ASCP1D80:00 093A:4F05 Touchpad: kernel bug: Touch jump detected and discarded.`
 
-Likely root cause: the `CONFIG_HID_HAPTIC` parser in `hid-multitouch`
-mis-applies the Y-axis logical max to the pressure axis when parsing this
-device's HID descriptor. Worth filing at:
+Root cause: the pad's own HID report descriptor. Tip Pressure declares no
+Logical Maximum, so under HID's global-item rules it inherits the value last
+set, the Y field's 2601. It is not a kernel parser bug.
 
-- libinput: <https://gitlab.freedesktop.org/libinput/libinput/-/issues>
-  (attach `sudo libinput record -o expertbook.yml /dev/input/event9`)
-- linux-input: <https://bugzilla.kernel.org> under Drivers / Input Devices
+The sister pad `093A:4811` showed the same symptoms and was fixed upstream in
+libinput 1.32 with `AttrInputProp=+INPUT_PROP_PRESSUREPAD`
+([issue 1318](https://gitlab.freedesktop.org/libinput/libinput/-/issues/1318),
+[MR 1504](https://gitlab.freedesktop.org/libinput/libinput/-/merge_requests/1504)).
+The kernel sets that property on its own only when a pad reports Button
+Type 1; this one does not. A `4F05` section next to `4811` in
+`30-vendor-pixart.quirks` is the upstream fix; see
+[`upstream-patches/`](../upstream-patches/). Attach
+`sudo libinput record -o expertbook.yml /dev/input/event9` to the merge
+request.
 
 ## Notes
 

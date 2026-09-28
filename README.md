@@ -169,17 +169,18 @@ Actions
 
 ### 1. [`touchpad-fix`](touchpad-fix/) — light-touch cursor
 
-<details><summary><b>The bug</b> — pressure axis mis-parsed by hid-multitouch</summary>
+<details><summary><b>The bug</b> — the pad's descriptor gives pressure the Y axis's maximum</summary>
 
-The kernel's HID descriptor parser inflates `ABS_MT_PRESSURE` max to **2601**
-(literally the Y-axis max value, suggesting a parser typo) for this PixArt
-haptic touchpad. Real hardware values top out around 1000. libinput's
-pressure thresholds are calibrated against the kernel-reported max, so real
-touches register at 1–6% of the bogus "max" — well below the activation
-threshold. Result: every motion is rejected as a "kernel bug: Touch jump."
+The pad's HID report descriptor gives Tip Pressure no Logical Maximum of its
+own, so it inherits the Y field's **2601** and the kernel reports that as the
+`ABS_MT_PRESSURE` maximum. Real presses sit far below it, so libinput's
+pressure thresholds never see a proper touch and every motion is rejected as a
+"kernel bug: Touch jump." The sister pad `093A:4811` was fixed upstream in
+libinput 1.32 with `AttrInputProp=+INPUT_PROP_PRESSUREPAD`; `4F05` has no
+upstream entry yet.
 
 ```
-$ sudo dmesg | grep "Touch jump" | wc -l
+$ journalctl -b | grep -c "Touch jump"   # libinput logs through the compositor
 1873                                    ← without the module
 0                                       ← with the module
 ```
@@ -191,7 +192,7 @@ $ sudo dmesg | grep "Touch jump" | wc -l
 | File | Path | What it does |
 |---|---|---|
 | `61-pixart-4f05-pressure-fix.hwdb` | `/etc/udev/hwdb.d/` | Clamps `EVDEV_ABS_18` (`ABS_PRESSURE`) and `EVDEV_ABS_3A` (`ABS_MT_PRESSURE`) to a sane range so libinput's pressure heuristics see usable values. |
-| `99-asus-expertbook-pixart-4f05.quirks` (installs as `local-overrides.quirks`) | `/etc/libinput/` | Tells libinput to ignore the pressure axes entirely via `AttrEventCode=-ABS_MT_PRESSURE;-ABS_PRESSURE`. Same shape as the shipped Asus UX302LA quirk. |
+| `99-asus-expertbook-pixart-4f05.quirks` (managed block in `local-overrides.quirks`) | `/etc/libinput/` | Tells libinput to ignore the pressure axes entirely via `AttrEventCode=-ABS_MT_PRESSURE;-ABS_PRESSURE`. Same shape as the shipped Asus UX302LA quirk. Since 1.2.0 it is written as a marked block, so other overrides in that shared file survive install and uninstall. |
 
 After install, `libinput quirks list /dev/input/event9` confirms the quirk
 is loaded.
