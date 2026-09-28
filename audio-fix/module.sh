@@ -427,10 +427,12 @@ audio_install_dkms() {
   # Preserve the previous convenience for the common case: when the running
   # kernel still needs DKMS, install its matching headers before inventorying
   # buildable kernels.
+  # Before anything can install packages: a new headers package runs the DKMS
+  # pacman hook, which reads every source under /usr/src as root.
+  audio_secure_legacy_sources
   if ! audio_kernel_has_upstream_ghost_quirk; then
     audio_require_build_tools
   fi
-  audio_secure_legacy_sources
 
   # Re-running install with the same, unchanged overlay keeps every working
   # build and only builds kernels that lack one. The same version with other
@@ -554,19 +556,30 @@ audio_install_dkms() {
     fi
   done
 
-  # Kernels still running an older overlay because they got no new one.
+  # Kernels that got no new overlay: still running an older one (held), or
+  # running none at all (unresolved, e.g. after a rollback failed earlier).
+  local running
   for kernel in "${failed[@]}" "${uncovered[@]}"; do
+    running=""
     for legacy in "${AUDIO_DKMS_LEGACY[@]}"; do
       if [[ $(audio_dkms_state_of "$legacy" "$kernel") == installed ]]; then
-        held+=("$kernel ($legacy)")
+        running=$legacy
         break
       fi
     done
+    if [[ -n $running ]]; then
+      held+=("$kernel ($running)")
+    elif [[ " ${unresolved[*]} " != *" $kernel "* ]]; then
+      unresolved+=("$kernel")
+    fi
   done
 
-  # Superseded overlays (and their sources and builds) go only when no kernel
-  # still runs one and no rollback is left half done.
-  if (( ${#held[@]} == 0 && ${#unresolved[@]} == 0 )) && audio_remove_legacy_dkms; then
+  # Superseded overlays (and their sources and builds) go only when every
+  # kernel that needs the overlay has the new one: a failed or uncovered kernel
+  # may still need them, even if it no longer runs them (a rollback that failed
+  # on an earlier run leaves the older build uninstalled but kept).
+  if (( ${#failed[@]} == 0 && ${#uncovered[@]} == 0 && ${#unresolved[@]} == 0 )) &&
+     audio_remove_legacy_dkms; then
     changed=1
   fi
 
