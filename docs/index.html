@@ -509,16 +509,16 @@ Result: install-all is appropriate for this hardware.</code></pre>
         <div class="ba-row">
           <div class="ba-cell ba-bad">
             <strong>Before — internal panel</strong>
-            eDP-1 goes black mid-session.
-            <code>kwin_wayland: Pageflip timed out!</code>
-            Only a reboot recovers.
+            HDR comes up washed out after every HDR modeset and stale content
+            lingers on screen under Linux 7.2's Panel Replay default; 7.0/7.1
+            went black outright (<code>kwin_wayland: Pageflip timed out!</code>).
           </div>
           <div class="ba-arrow">→</div>
           <div class="ba-cell ba-good">
             <strong>After — <code>display-fix</code></strong>
-            Linux 7.2's repaired PSR / Panel Replay defaults are retained;
-            <code>xe.enable_dpcd_backlight=2</code> makes panel brightness follow
-            the sysfs/KDE setting.
+            Self-refresh pinned to PSR1: vivid HDR after every toggle, a smooth
+            cursor, no stale frames; <code>xe.enable_dpcd_backlight=2</code>
+            makes panel brightness follow the sysfs/KDE setting.
           </div>
         </div>
       </div>
@@ -650,7 +650,7 @@ sudo reboot</code></pre>
   ------------------------------------------------------------------------------------
   1   audio-fix                3.1.1    3.1.1     up to date     Adaptive ghost-RT722 fix + HiFi audio
   2   camera-firmware          3009     3009      up to date     Verified camera UEFI capsule
-  3   display-fix              1.3.0    1.3.0     up to date     Linux 7.2 defaults + DPCD brightness
+  3   display-fix              1.4.0    1.4.0     up to date     PSR1 self-refresh + DPCD brightness
   4   intel-perf-fix           1.1.0    1.1.0     up to date     thermald + intel-lpmd
   5   keyboard-backlight-auto  1.0.0    1.0.0     up to date     Ambient-light keyboard backlight
   6   keyboard-backlight-fix   2.0.0    -         not installed  (superseded) asusd workaround
@@ -712,8 +712,8 @@ Actions
           </tr>
           <tr>
             <td><a href="https://github.com/burakgon/asus-expertbook-linux/tree/main/display-fix"><code>display-fix</code></a></td>
-            <td><span class="mono">1.3.0</span></td>
-            <td>Linux 7.2 PSR/Panel Replay defaults plus forced VESA DPCD backlight for working brightness</td>
+            <td><span class="mono">1.4.0</span></td>
+            <td>PSR1 self-refresh plus forced VESA DPCD backlight for working brightness</td>
           </tr>
           <tr>
             <td><a href="https://github.com/burakgon/asus-expertbook-linux/tree/main/intel-perf-fix"><code>intel-perf-fix</code></a></td>
@@ -835,46 +835,65 @@ cs35l56 sdw:0:2:01fa:3556:01:0: Tuning PID: 0x23134, SID: 0x470200  ← with</co
       </details>
 
       <details>
-        <summary><code>display-fix</code> — Linux 7.2 display defaults plus DPCD brightness</summary>
+        <summary><code>display-fix</code> — PSR1 self-refresh plus DPCD brightness</summary>
         <p>
           The Samsung Display Corp panel reports IEEE OUI <code>00:aa:01</code>
           in DPCD register 0x300 and supports Panel Replay Selective Update
-          (Early Transport). The xe driver's PSR idle wait times out on this
-          panel firmware:
-        </p>
-        <pre class="term"><code>xe 0000:00:02.0: [drm] *ERROR* Timed out waiting PSR idle state
-xe 0000:00:02.0: [drm] *ERROR* [CRTC:151:pipe A] DSB 0 timed out waiting for idle
-kwin_wayland: Pageflip timed out! This is a bug in the xe kernel driver</code></pre>
-        <p>
-          On older kernels, once wedged, only a reboot recovered — modeset
-          cycle, GPU reset, and runtime PSR-disable via debugfs all failed to
-          unstick the display state buffer. Worse than a black panel: when the PSR2
-          <strong>selective-fetch</strong> path deadlocks the DSB during heavy
-          compositing (a screen capture is enough), it can take the whole
-          <strong>kernel</strong> down — a silent hard hang with no oops, no MCE,
-          empty <code>pstore</code>/BERT.
+          (Early Transport), the self-refresh mode Linux 7.2's xe driver picks
+          by default on Panther Lake. In that mode the panel comes up visibly
+          desaturated after every HDR-enabling modeset (KWin's HDR toggle, a
+          fresh login with HDR on) and stale content lingers on screen. The
+          colors return once anything streams frames with the SDPs again (a
+          KWin color-accuracy toggle, a write to <code>i915_edp_psr_debug</code>),
+          so the panel appears to miss the new BT.2020/PQ signaling when Panel
+          Replay stops the stream on a static desktop. Dropping only Early
+          Transport keeps the washed out colors and slows the cursor to ~20 fps,
+          so Panel Replay itself is at fault.
         </p>
         <p>
-          Linux 7.2 contains generic Panther Lake Panel Replay/PSR/DC-state,
-          selective-fetch, DSB and Xe recovery fixes. Version 1.3 re-enables
-          those kernel defaults instead of carrying the older global
-          <code>=0</code> safety switches. Issue
+          Disabling Panel Replay alone is worse: xe falls back to PSR2 selective
+          update over the panel's DSC link and every screen update paints
+          red/green speckle garbage, most plausibly because the driver gates
+          PSR2 + DSC on platform generation only while this panel advertises DSC
+          selective update for Panel Replay alone. Disabling selective fetch
+          (<code>xe.enable_psr2_sel_fetch=0</code>) freezes the panel on the
+          boot console text. PSR1 passes everything: vivid colors across HDR
+          toggles, a smooth cursor, no stale frames, and self-refresh still
+          saves power on a static screen. Linux 7.0/7.1 also wedged the display
+          engine outright (<code>Timed out waiting PSR idle state</code>,
+          <code>DSB 0 timed out waiting for idle</code>, KWin's
+          <code>Pageflip timed out!</code>) with a selective-fetch DSB deadlock
+          that could take the whole kernel down; 7.2 fixed those hangs.
+        </p>
+        <p>
+          Version 1.4 therefore pins self-refresh to PSR1 with
+          <code>xe.enable_panel_replay=0 xe.enable_psr=1</code>. Both are needed:
+          <code>enable_psr=1</code> alone leaves Panel Replay on, and
+          <code>enable_panel_replay=0</code> alone lands in the PSR2 garbage.
+          The <code>mismatch in vsc dp vsc sdp</code> error 7.2 logs on every
+          HDR modeset is a separate readout false positive, fixed by kernel
+          commit <code>e2cb54fbe4c3</code> ("drm/i915/dp: Fix VSC SDP readout
+          for Panel Replay with colorimetry") in Sultan Alsawaf's tree, upstream
+          submission pending. Issue
           <a href="https://github.com/burakgon/asus-expertbook-linux/issues/7">#7</a>
           records the older reproducer and the Linux 7.2 retest.
         </p>
         <p><strong>Files installed:</strong></p>
         <ul>
-          <li><code>/etc/modprobe.d/xe-dpcd-backlight.conf</code> — forces only <code>enable_dpcd_backlight=2</code> for any late module load</li>
-          <li><code>/etc/limine-entry-tool.d/90-asus-expertbook-linux-display.conf</code> — appends only <code>xe.enable_dpcd_backlight=2</code>; the post-install hook calls <code>limine-update</code></li>
+          <li><code>/etc/modprobe.d/xe-dpcd-backlight.conf</code> — <code>enable_dpcd_backlight=2 enable_panel_replay=0 enable_psr=1</code> for any late module load</li>
+          <li><code>/etc/limine-entry-tool.d/90-asus-expertbook-linux-display.conf</code> — appends <code>xe.enable_dpcd_backlight=2 xe.enable_panel_replay=0 xe.enable_psr=1</code>; the post-install hook calls <code>limine-update</code></li>
         </ul>
         <p>
           Install removes the old PSR/Panel Replay modprobe file and archives
-          the legacy Omarchy Limine drop-in so neither can silently re-add
-          <code>xe.enable_psr=0</code>, <code>xe.enable_psr2_sel_fetch=0</code> or
-          <code>xe.enable_panel_replay=0</code>. The DPCD brightness override is
-          independent and remains verified on this panel. Patch <code>0001</code>
-          is retained only as a fallback if a 7.2+ long soak reproduces the
-          freeze; it is not currently submission-ready.
+          the legacy Omarchy Limine drop-in so neither can re-add
+          <code>xe.enable_psr=0</code> or <code>xe.enable_psr2_sel_fetch=0</code>
+          underneath the module. <code>./patch.sh status display-fix</code>
+          warns when either is on the cmdline, when
+          <code>xe.enable_panel_replay=0</code> appears without
+          <code>xe.enable_psr=1</code>, and when the panel's debugfs status
+          reports anything but PSR1. Patch <code>0001</code> is no longer the
+          right upstream fix, since quirking off Panel Replay alone lands in the
+          PSR2 garbage; a per-panel PSR1 quirk would be new work.
         </p>
       </details>
 
@@ -1220,7 +1239,7 @@ EC set level 0/3 | manual override active for 0.0-18.4 lux (reading 9.2)</code><
           <tr>
             <td><span class="mono">0001</span></td>
             <td>Linux display</td>
-            <td>Experimental fallback; held while Linux 7.2 runs with repaired PSR/Panel Replay defaults</td>
+            <td>Not submittable as written: quirking off Panel Replay alone drops this panel into PSR2 + DSC garbage; a per-panel PSR1 quirk would be new work</td>
           </tr>
           <tr>
             <td>former <span class="mono">0002</span></td>

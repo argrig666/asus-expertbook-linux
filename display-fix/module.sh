@@ -1,25 +1,46 @@
 # shellcheck shell=bash
 # display-fix module manifest.
 #
-# Linux 7.2 includes the Panther Lake Panel Replay/PSR, selective-fetch, DSB,
-# DC-state and Xe recovery fixes needed to retest the panel with self-refresh
-# enabled. Do not globally force PSR, PSR2 selective fetch or Panel Replay off.
-# Keep only the panel's independently verified VESA DPCD backlight override
-# (`xe.enable_dpcd_backlight=2`), which fixes the B9406CAA case where sysfs
-# brightness changes but panel luminance does not. modprobe.d alone is NOT
-# enough on this distro — xe loads from initramfs before
-# /etc/modprobe.d is honoured, so the params have to land on the kernel
+# Two xe overrides for the B9406CAA's Samsung OLED, both on the kernel cmdline.
+# `xe.enable_dpcd_backlight=2` forces the VESA AUX/DPCD backlight interface,
+# without which sysfs brightness changes but panel luminance doesn't.
+# `xe.enable_panel_replay=0 xe.enable_psr=1` runs self-refresh as PSR1 instead
+# of Linux 7.2's Panther Lake default, Panel Replay with Selective Update and
+# Early Transport. In that default mode the panel comes up visibly desaturated
+# after every HDR-enabling modeset and leaves stale content on screen; the
+# colors return once anything streams frames with the SDPs again (a KWin
+# color-accuracy toggle, a write to i915_edp_psr_debug), so the panel seems to
+# miss the new BT.2020/PQ signaling when Panel Replay stops the stream on a
+# static desktop. Dropping only Early Transport keeps the washed out colors and
+# slows the cursor to ~20 fps, so Panel Replay itself is at fault.
+#
+# Disabling Panel Replay alone is worse: xe falls back to PSR2 selective update
+# over the panel's DSC link and every screen update paints red/green speckle
+# garbage, most likely because xe gates PSR2 + DSC on platform generation only
+# while this sink advertises DSC selective update for Panel Replay alone.
+# Disabling selective fetch (`xe.enable_psr2_sel_fetch=0`) freezes the panel
+# on the boot console text. PSR1 passes everything: vivid colors across HDR
+# toggles, a smooth cursor, no stale frames, and self-refresh still saves
+# power on a static screen. Both PSR parameters are needed, since
+# `enable_psr=1` alone leaves Panel Replay on (Panel Replay bypasses the PSR2
+# checks that parameter feeds into).
+#
+# modprobe.d alone is NOT enough on this distro: xe loads from the initramfs
+# before /etc/modprobe.d is honoured, so the params have to land on the kernel
 # cmdline. We install a managed `limine-entry-tool` drop-in and regenerate the
 # Limine entries. This is the CachyOS source of truth; `/etc/default/limine`
-# is not used by current limine-mkinitcpio-hook releases.
+# is not used by current limine-mkinitcpio-hook releases. GRUB users put the
+# same three parameters on GRUB_CMDLINE_LINUX_DEFAULT instead.
 #
 # We still drop the modprobe.d file as belt-and-suspenders for any future
 # scenario where xe is rmmod'd and re-loaded post-boot. Install also retires
-# the two older local files that added the global `=0` safety switches.
+# the two older local files that carried the global `=0` safety switches
+# (`xe.enable_psr=0` would override PSR1 and `xe.enable_psr2_sel_fetch=0`
+# would freeze the boot).
 
 MODULE_NAME="display-fix"
-MODULE_DESC="B9406CAA xe: working DPCD brightness; PSR/Panel Replay use Linux 7.2 defaults"
-MODULE_VERSION="1.3.0"
+MODULE_DESC="B9406CAA xe: PSR1 self-refresh + working DPCD brightness"
+MODULE_VERSION="1.4.0"
 
 MODULE_FILES=(
   "xe-dpcd-backlight.conf:/etc/modprobe.d/xe-dpcd-backlight.conf"
@@ -76,7 +97,7 @@ module_post_install() {
   _df_remove_obsolete_files
   _df_regen_limine
   echo
-  echo "Reboot to apply: xe will use Linux 7.2 PSR/Panel Replay defaults with VESA DPCD backlight forced."
+  echo "Reboot to apply: xe will run the panel in PSR1 with the VESA DPCD backlight forced."
 }
 
 module_post_uninstall() {
@@ -84,47 +105,74 @@ module_post_uninstall() {
   _df_remove_obsolete_files
   _df_regen_limine
   echo
-  echo "Reboot to stop forcing the VESA DPCD backlight interface."
+  echo "Reboot to return to the kernel's Panel Replay default and automatic backlight interface selection."
 }
 
 module_status_extra() {
-  local backlight_value="" token
-
-  if grep -Eq '(^| )(xe\.enable_psr=0|xe\.enable_psr2_sel_fetch=0|xe\.enable_panel_replay=0)( |$)' \
-      /proc/cmdline 2>/dev/null; then
-    printf '  self-refresh:%s legacy =0 override active in this boot — reboot to use kernel defaults%s\n' \
-      "$c_warn" "$c_off"
-  else
-    printf '  self-refresh:%s no global PSR/Panel Replay disable; Linux defaults active%s\n' \
-      "$c_ok" "$c_off"
-  fi
+  local token backlight="" panel_replay="" psr="" sel_fetch=""
+  local staged=/etc/limine-entry-tool.d/90-asus-expertbook-linux-display.conf
 
   while IFS= read -r token; do
-    if [[ $token == xe.enable_dpcd_backlight=* ]]; then
-      backlight_value="${token#*=}"
-    fi
+    case $token in
+      xe.enable_dpcd_backlight=*) backlight="${token#*=}" ;;
+      xe.enable_panel_replay=*)   panel_replay="${token#*=}" ;;
+      xe.enable_psr=*)            psr="${token#*=}" ;;
+      xe.enable_psr2_sel_fetch=*) sel_fetch="${token#*=}" ;;
+    esac
   done < <(tr ' ' '\n' </proc/cmdline 2>/dev/null)
 
-  if [[ $backlight_value == 2 ]]; then
+  if [[ $sel_fetch == 0 ]]; then
+    printf '  self-refresh:%s xe.enable_psr2_sel_fetch=0 active: this freezes the panel at boot on Panther Lake, remove it%s\n' \
+      "$c_warn" "$c_off"
+  elif [[ $panel_replay == 0 && $psr == 1 ]]; then
+    printf '  self-refresh:%s PSR1 active (xe.enable_panel_replay=0 xe.enable_psr=1)%s\n' \
+      "$c_ok" "$c_off"
+  elif [[ $panel_replay == 0 ]]; then
+    printf '  self-refresh:%s xe.enable_panel_replay=0 without xe.enable_psr=1: PSR2 selective update paints garbage on this panel%s\n' \
+      "$c_warn" "$c_off"
+  elif [[ $psr == 0 ]]; then
+    printf '  self-refresh:%s xe.enable_psr=0 active: self-refresh fully off (expected PSR1)%s\n' \
+      "$c_warn" "$c_off"
+  elif [[ -f $staged ]]; then
+    printf '  self-refresh:%s PSR1 staged, reboot to apply (this boot runs the Panel Replay default)%s\n' \
+      "$c_warn" "$c_off"
+  else
+    printf '  self-refresh:%s PSR1 not active; the kernel default (Panel Replay) is running%s\n' \
+      "$c_warn" "$c_off"
+  fi
+
+  if [[ $backlight == 2 ]]; then
     printf '  backlight:%s xe.enable_dpcd_backlight=2 active (forced VESA interface)%s\n' \
       "$c_ok" "$c_off"
-  elif [[ -n $backlight_value ]]; then
+  elif [[ -n $backlight ]]; then
     printf '  backlight:%s effective xe.enable_dpcd_backlight=%s (expected 2)%s\n' \
-      "$c_warn" "$backlight_value" "$c_off"
-  elif [[ -f /etc/limine-entry-tool.d/90-asus-expertbook-linux-display.conf ]]; then
-    printf '  backlight:%s DPCD fix staged — reboot to apply%s\n' "$c_warn" "$c_off"
+      "$c_warn" "$backlight" "$c_off"
+  elif [[ -f $staged ]]; then
+    printf '  backlight:%s DPCD fix staged, reboot to apply%s\n' "$c_warn" "$c_off"
   else
     printf '  backlight:%s xe.enable_dpcd_backlight=2 is not active%s\n' "$c_warn" "$c_off"
   fi
 
-  if [[ -r /sys/kernel/debug/dri/0/i915_edp_psr_status ]]; then
-    local mode
-    mode="$(awk -F': ' '/^PSR mode:/ {print $2; exit}' /sys/kernel/debug/dri/0/i915_edp_psr_status 2>/dev/null)"
-    if [[ -n "$mode" ]]; then
-      case "$mode" in
-        disabled*) printf '  panel:   %sPSR mode: %s%s\n' "$c_warn" "$mode" "$c_off" ;;
-        *)         printf '  panel:   %sPSR mode: %s%s\n' "$c_ok" "$mode" "$c_off" ;;
-      esac
+  # debugfs is root-only, so this line shows for patch.sh (which auto-elevates)
+  # and stays silent for an unprivileged caller. xe registers its device under
+  # dri/0000:00:02.0 where i915 used dri/0, hence the glob; the per-connector
+  # file is the authoritative one and the device-level file its older alias.
+  local status_file="" candidate mode
+  for candidate in /sys/kernel/debug/dri/*/eDP-*/i915_psr_status \
+                   /sys/kernel/debug/dri/*/i915_edp_psr_status; do
+    if [[ -r $candidate ]]; then
+      status_file=$candidate
+      break
     fi
-  fi
+  done
+  [[ -n $status_file ]] || return 0
+
+  mode="$(awk -F': ' '/^PSR mode:/ {print $2; exit}' "$status_file" 2>/dev/null)"
+  [[ -n $mode ]] || return 0
+  case $mode in
+    "PSR1 enabled"*)
+      printf '  panel:   %sPSR mode: %s%s\n' "$c_ok" "$mode" "$c_off" ;;
+    *)
+      printf '  panel:   %sPSR mode: %s (expected PSR1 enabled)%s\n' "$c_warn" "$mode" "$c_off" ;;
+  esac
 }
