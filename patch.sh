@@ -229,8 +229,8 @@ do_list_one() {
 # Column widths (visible chars only — color codes wrap padded text).
 _TBL_W_IDX=3
 _TBL_W_NAME=25
-_TBL_W_CUR=8
-_TBL_W_INSTALLED=9
+_TBL_W_CUR=10
+_TBL_W_INSTALLED=10
 _TBL_W_STATE=14
 _TBL_GUTTER=2  # spaces between columns
 

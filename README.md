@@ -52,10 +52,13 @@ different distro, the modules themselves still apply — only the
 | Hardware | Symptom out of the box | After installing | Module |
 |---|---|---|---|
 | **PixArt I²C-HID** haptic touchpad `093A:4F05` (ACPI `ASCP1D80`) | **Touchpad doesn't move the cursor.** Kernel log spams `kernel bug: Touch jump detected and discarded.` libinput rejects every event. A separate `i2c_designware.0` wedge can freeze the whole desktop; see [below](#if-the-desktop-freezes). | Cursor responds to light touches like any normal laptop. Zero "Touch jump" lines. The bus wedge is a kernel stall the quirk does not prevent. | [`touchpad-fix`](touchpad-fix/) |
+| **PixArt haptic touchpad** (Windows Precision pressure pad) | **No click-force or haptic-strength setting.** MyASUS sets both on Windows; Linux has no control, and the firmware forgets them at power-off. | *(optional)* `touchpad-haptics set --click-force light --intensity 30`, saved values restored whenever the pad appears. Standard HID feature reports only, verified against the pad's descriptor. | [`touchpad-haptics`](touchpad-haptics/) |
 | **Cirrus CS42L43** codec + 2× **CS35L56** speaker amps (PCI subsystem `1043:15e4`) | **Dummy Output / silent speakers.** A ghost RT722 can abort ALSA card registration; older userspace also lacks tuning/UCM. | Uses the accepted in-kernel B9406 quirk when present and DKMS only on older kernels; HiFi routing and calibrated amps work. | [`audio-fix`](audio-fix/) |
 | **Intel Wi-Fi 7 BE211** Panther Lake CNVi (`8086:e440`) | **Wi-Fi 7 (802.11be / EHT) is unstable.** EHT RX can collapse to MCS0/NSS1 and MLO sessions tear down. Linux 7.2's C106 firmware may separately flood `missed beacons` warnings even while data flows. | EHT disabled (`disable_11be=Y`) → fast **Wi-Fi 6 / HE** fallback; status reports firmware and warning count without hiding logs or forcing a firmware downgrade. | [`wifi-fix`](wifi-fix/) |
 | **Samsung Display Corp** eDP panel + Intel **`xe`** driver (Xe3 Panther Lake iGPU) | **Linux 7.2's Panel Replay default misbehaves on this panel:** PSR idle timeouts with on-screen corruption, flicker, VRR smearing, stale frames, and HDR washed out after every HDR modeset. Brightness can also change in sysfs without changing panel luminance. | Self-refresh pinned to PSR1: owners report no flicker, stale frames or VRR smearing, and HDR stays vivid across toggles; forced VESA DPCD backlight makes KDE/sysfs brightness work. | [`display-fix`](display-fix/) |
+| **Samsung OLED HDR** (EDID HDR metadata inside DisplayID 2.0) | **KDE offers no HDR toggle.** libdisplay-info 0.3.0 never looks inside the DisplayID 2.0 extension where this panel declares PQ, 1600 cd/m² and BT.2020, so KWin sees an SDR panel. | *(optional)* The seven upstream commits that read DisplayID 2.0 CTA blocks, backported onto 0.3.0 with the `.so.3` ABI intact and preferred through `ld.so.conf.d`; HDR appears in Display & Monitor. Removed again once the distro ships 0.4.0. | [`hdr-fix`](hdr-fix/) |
 | **Intel Core Ultra X7/X9** Panther Lake hybrid (P + E + LP-E cores) | **No userspace thermal policy:** the OEM's adaptive thermal tables (PL1/PL2 limits, passive trips) are not applied; only the kernel's int340x sensors and limits are exposed. | `thermald` runs the OEM tables in adaptive mode. `intel-lpmd` is opt-in: on Panther Lake it showed no significant idle gain and slowed app launches. | [`intel-perf-fix`](intel-perf-fix/) |
+| **Platform profiles** (Intel SoC Power Slider + asus-wmi) | **Power Save only reaches `balanced`.** The legacy profile file lists only the choices both handlers share, so the SoC slider never goes low-power and the fans never go quiet. | Power Save sets the SoC slider to `low-power` and asus-wmi to `quiet`; Balanced and Performance map one-to-one. power-profiles-daemon stays in charge. | [`power-profile-bridge`](power-profile-bridge/) |
 | **USB UVC webcam** (+ idle Panther Lake NPU) | **No AI camera effects.** Windows Studio Effects (background blur, smart framing) doesn't exist on Linux out of the box. | **CPU** background blur via OBS + `obs-backgroundremoval`, exposed as a virtual camera ("AI Camera"). *(NPU offload is not available in the OBS plugin on Linux — see the module's reality-check note.)* | [`webcam-ai-fix`](webcam-ai-fix/) |
 | **Shinetech USB camera + UEFI ESRT target** | ASUS camera firmware 3009 is distributed as a Windows EXE. | Compares locally against the fixed, verified 3009 baseline; offers a confirmed `fwupd` capsule update without running Windows or querying ASUS for newer versions. | [`camera-firmware`](camera-firmware/) |
 | **Intel Sensor Hub** (`8086:e445`, carries the ambient light sensor) | **No ambient light sensor at all.** The kernel's generic `ish_ptl.bin` is rejected (`ISH loader: cmd 2 failed 10`); linux-firmware has no ASUS image, so `/sys/bus/iio` never gets an `als` device. | The ASUS-signed image from ASUS's own Sensor Hub driver package is verified and installed under the per-OEM name the kernel requests; `iio:device1 = als` appears and `keyboard-backlight-auto` has a sensor to read. | [`ish-firmware`](ish-firmware/) |
@@ -114,7 +117,7 @@ After reboot:
 ./patch.sh status
 ```
 
-You should see all ten modules `up to date` (or not applicable) and their runtime
+You should see all thirteen modules `up to date` (or not applicable) and their runtime
 checks green — except `keyboard-backlight-fix`, which reports `not installed`
 because it deliberately supersedes itself.
 
@@ -139,17 +142,21 @@ typing single letters. Numbered table, color-coded state, cached.
 ```
 === asus_expertboot_linux patcher ===
 
-  #   Module                    Version  Installed State          Description
-  ------------------------------------------------------------------------------------
-  1   audio-fix                 3.1.1    3.1.1     up to date     Adaptive ghost-RT722 fix + HiFi audio
-  2   camera-firmware           3009     3009      up to date     Verified camera UEFI capsule
-  3   display-fix               1.4.0    1.4.0     up to date     PSR1 self-refresh + DPCD brightness
-  4   intel-perf-fix            1.1.0    1.1.0     up to date     thermald + intel-lpmd
-  5   keyboard-backlight-auto   1.0.0    1.0.0     up to date     Ambient-light keyboard backlight
-  6   keyboard-backlight-fix    2.0.0    -         not installed  (superseded) asusd workaround
-  7   touchpad-fix              1.1.1    1.1.1     up to date     PixArt 093A:4F05 pressure quirk
-  8   webcam-ai-fix             1.1.0    1.1.0     up to date     OBS CPU background blur
-  9   wifi-fix                  2.1.0    2.1.0     up to date     BE211: EHT fallback + C106 diagnostics
+  #   Module                    Version    Installed  State          Description
+  --------------------------------------------------------------------------------------
+  1   audio-fix                 3.2.0      3.2.0      up to date     Adaptive ghost-RT722 fix + HiFi audio
+  2   camera-firmware           3009       3009       up to date     Verified camera UEFI capsule
+  3   display-fix               1.4.0      1.4.0      up to date     PSR1 self-refresh + DPCD brightness
+  4   hdr-fix                   1.0.0      1.0.0      up to date     DisplayID 2.0 HDR metadata for KWin
+  5   intel-perf-fix            1.2.0      1.2.0      up to date     thermald (+ opt-in intel-lpmd)
+  6   ish-firmware              5.8.1.7783 5.8.1.7783 up to date     ASUS Sensor Hub image (ambient light)
+  7   keyboard-backlight-auto   1.2.0      1.2.0      up to date     Ambient-light keyboard backlight
+  8   keyboard-backlight-fix    2.0.0      -          not installed  (superseded) asusd workaround
+  9   power-profile-bridge      1.0.0      1.0.0      up to date     Power-saver → SoC low-power + quiet fans
+  10  touchpad-fix              1.2.0      1.2.0      up to date     PixArt 093A:4F05 pressure quirk
+  11  touchpad-haptics          1.0.0      1.0.0      up to date     Click force + haptic intensity
+  12  webcam-ai-fix             1.1.0      1.1.0      up to date     OBS CPU background blur
+  13  wifi-fix                  2.1.0      2.1.0      up to date     BE211: EHT fallback + beacon diagnostics
 
 Actions
   i <num>    install / update module (idempotent — re-runs post hooks)
@@ -745,6 +752,41 @@ redistributed. Install it before `keyboard-backlight-auto`.
 See [`ish-firmware/README.md`](ish-firmware/README.md) for the evidence,
 hashes and the naming rule.
 
+### 11. [`power-profile-bridge`](power-profile-bridge/) — Power Save that actually saves
+
+Panther Lake registers two platform-profile handlers here, Intel's
+`SoC Power Slider` (`low-power balanced performance`) and `asus-wmi`
+(`quiet balanced performance`). The legacy `/sys/firmware/acpi/platform_profile`
+that power-profiles-daemon drives lists only the choices both share, so its
+Power Save writes `balanced`: the slider never reaches `low-power` and the fans
+never reach `quiet` ([asusctl#387](https://github.com/OpenGamingCollective/asusctl/issues/387)).
+A small root service follows power-profiles-daemon's `ActiveProfile` over D-Bus
+and writes each handler's own `/sys/class/platform-profile/*/profile`; the
+legacy file then reads `custom`, which power-profiles-daemon ignores. Details in
+[`power-profile-bridge/README.md`](power-profile-bridge/README.md).
+
+### 12. [`touchpad-haptics`](touchpad-haptics/) — *(optional)* click force and haptic strength
+
+The pad is a Windows Precision Touchpad pressure pad with two standard HID
+feature reports: Button Press Threshold (report 8, 1–3) and Haptic Intensity
+(report 9, 0–100). A small CLI sends validated `SET_FEATURE` requests after
+matching the pad's HID ID and exact report descriptor; a udev rule gives the
+logged-in user access and restores saved values at boot, because the firmware
+forgets them at power-off. Details in
+[`touchpad-haptics/README.md`](touchpad-haptics/README.md).
+
+### 13. [`hdr-fix`](hdr-fix/) — *(optional)* HDR toggle for the internal OLED
+
+The panel's EDID declares HDR (PQ, max 1600 cd/m², BT.2020 RGB) inside a
+DisplayID 2.0 extension. libdisplay-info 0.3.0, which KWin uses, does not look
+there; 0.4.0 does but changes the soname. The module builds 0.3.0 from its
+pinned release tarball with the seven upstream DisplayID 2.0 commits, keeps the
+`.so.3` ABI (all packaged symbols exported, upstream tests 64/64), installs it
+under `/usr/local/lib/asus-expertbook-hdr` and puts that directory in
+`/etc/ld.so.conf.d`. No pacman file is touched, and install removes the
+override once the system package is 0.4.0. Details in
+[`hdr-fix/README.md`](hdr-fix/README.md).
+
 ## How it works
 
 The whole project is a small bash module manager (`patch.sh`, ~500 lines)
@@ -760,14 +802,18 @@ asus-expertbook-linux/
 │   └── …                       # payload files
 ├── camera-firmware/            # verified ASUS 3009 capsule staging
 ├── display-fix/  …
+├── hdr-fix/                    # libdisplay-info 0.3.0 + DisplayID 2.0 backport patches
 ├── intel-perf-fix/  …
+├── ish-firmware/               # verified ASUS Sensor Hub image staging
 ├── keyboard-backlight-auto/  …
 ├── keyboard-backlight-fix/  …
+├── power-profile-bridge/  …
 ├── touchpad-fix/  …
+├── touchpad-haptics/  …
 ├── webcam-ai-fix/  …
 ├── wifi-fix/  …
-├── upstream-patches/           # accepted/pending/retired upstream tracking
-│   └── 0001, 0003, 0004.patch
+├── upstream-patches/           # accepted/pending upstream patches + tracker drafts
+│   └── 0001, 0003, 0004.patch, stable request, issue drafts
 ├── docs/                       # the GitHub Pages site
 └── scripts/
     └── check-hardware.sh       # one-shot compatibility check
