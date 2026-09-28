@@ -55,7 +55,7 @@ different distro, the modules themselves still apply — only the
 | **Cirrus CS42L43** codec + 2× **CS35L56** speaker amps (PCI subsystem `1043:15e4`) | **Dummy Output / silent speakers.** A ghost RT722 can abort ALSA card registration; older userspace also lacks tuning/UCM. | Uses the accepted in-kernel B9406 quirk when present and DKMS only on older kernels; HiFi routing and calibrated amps work. | [`audio-fix`](audio-fix/) |
 | **Intel Wi-Fi 7 BE211** Panther Lake CNVi (`8086:e440`) | **Wi-Fi 7 (802.11be / EHT) is unstable.** EHT RX can collapse to MCS0/NSS1 and MLO sessions tear down. Linux 7.2's C106 firmware may separately flood `missed beacons` warnings even while data flows. | EHT disabled (`disable_11be=Y`) → fast **Wi-Fi 6 / HE** fallback; status reports firmware and warning count without hiding logs or forcing a firmware downgrade. | [`wifi-fix`](wifi-fix/) |
 | **Samsung Display Corp** eDP panel + Intel **`xe`** driver (Xe3 Panther Lake iGPU) | **Linux 7.2's Panel Replay default misbehaves on this panel:** PSR idle timeouts with on-screen corruption, flicker, VRR smearing, stale frames, and HDR washed out after every HDR modeset. Brightness can also change in sysfs without changing panel luminance. | Self-refresh pinned to PSR1: owners report no flicker, stale frames or VRR smearing, and HDR stays vivid across toggles; forced VESA DPCD backlight makes KDE/sysfs brightness work. | [`display-fix`](display-fix/) |
-| **Intel Core Ultra X7/X9** Panther Lake hybrid (P + E + LP-E cores) | **Idle power 4–5 W**, fans audible at idle, P-cores never deep-sleep. | Idle ≈ 2–2.5 W. Workload parks on a single LP-E core. P-cores reach `C10`. | [`intel-perf-fix`](intel-perf-fix/) |
+| **Intel Core Ultra X7/X9** Panther Lake hybrid (P + E + LP-E cores) | **No userspace thermal policy:** the OEM's adaptive thermal tables (PL1/PL2 limits, passive trips) are not applied; only the kernel's int340x sensors and limits are exposed. | `thermald` runs the OEM tables in adaptive mode. `intel-lpmd` is opt-in: on Panther Lake it showed no significant idle gain and slowed app launches. | [`intel-perf-fix`](intel-perf-fix/) |
 | **USB UVC webcam** (+ idle Panther Lake NPU) | **No AI camera effects.** Windows Studio Effects (background blur, smart framing) doesn't exist on Linux out of the box. | **CPU** background blur via OBS + `obs-backgroundremoval`, exposed as a virtual camera ("AI Camera"). *(NPU offload is not available in the OBS plugin on Linux — see the module's reality-check note.)* | [`webcam-ai-fix`](webcam-ai-fix/) |
 | **Shinetech USB camera + UEFI ESRT target** | ASUS camera firmware 3009 is distributed as a Windows EXE. | Compares locally against the fixed, verified 3009 baseline; offers a confirmed `fwupd` capsule update without running Windows or querying ASUS for newer versions. | [`camera-firmware`](camera-firmware/) |
 | **Intel Sensor Hub** (`8086:e445`, carries the ambient light sensor) | **No ambient light sensor at all.** The kernel's generic `ish_ptl.bin` is rejected (`ISH loader: cmd 2 failed 10`); linux-firmware has no ASUS image, so `/sys/bus/iio` never gets an `als` device. | The ASUS-signed image from ASUS's own Sensor Hub driver package is verified and installed under the per-OEM name the kernel requests; `iio:device1 = als` appears and `keyboard-backlight-auto` has a sensor to read. | [`ish-firmware`](ish-firmware/) |
@@ -472,29 +472,40 @@ processed feed as "AI Camera".
 
 </details>
 
-### 6. [`intel-perf-fix`](intel-perf-fix/) — Panther Lake idle / thermal
+### 6. [`intel-perf-fix`](intel-perf-fix/) — Panther Lake thermal policy
 
-<details><summary><b>The bug</b> — kernel-default thermal throttle and idle scheduling are coarse on Panther Lake</summary>
+<details><summary><b>The bug</b> — the OEM's thermal tables go unused</summary>
 
-Without a userspace thermal daemon, the kernel governor's only lever is
-"cap CPU frequency". On Panther Lake's hybrid topology (P-cores + E-cores +
-LP-E cores), a P/E-aware throttle is far smarter — it can park work on
-slower cores instead of slowing everything down.
+Panther Lake is an "adaptive" thermal platform: the firmware carries the OEM's
+own thermal tables (Intel DTT: PL1/PL2 limits, passive trip points, a
+power-slider condition). The kernel's int340x drivers expose the sensors and
+limits, but nothing in the kernel runs that policy.
 
-Without `intel-lpmd`, idle work spreads across multiple cores; with it,
-all idle work concentrates on a single LP-E core and the P-cores deep-sleep.
+Scheduling is not the gap it looks like. This 16-core CPU has no SMT, so the
+kernel places work by core capacity ("Hybrid CPU capacity scaling enabled",
+P 1024 / E 701 / LP-E 625) instead of ITMT.
 
 </details>
 
-<details><summary><b>The fix</b> — install + enable thermald and intel-lpmd</summary>
+<details><summary><b>The fix</b> — thermald by default, intel-lpmd opt-in</summary>
 
 | Package | Source | Service | Effect |
 |---|---|---|---|
-| `thermald` | `extra` repo | `thermald.service` | P/E-core-aware thermal throttle. |
-| `intel-lpmd` | `extra` / `cachyos` repo | `intel_lpmd.service` | Parks idle work on LP-E core, lets P-cores deep-sleep. |
+| `thermald` | `extra` repo | `thermald.service` | Runs the OEM's adaptive thermal tables (supported on Panther Lake since 2.5.9). Can lower limits if a BIOS table is bad; since 2.5.12 it restores them when stopped, so an A/B test is easy. |
+| `intel-lpmd` | `extra` / `cachyos` repo | `intel_lpmd.service` | **Opt-in** (`sudo INTEL_PERF_LPMD=1 ./patch.sh install intel-perf-fix`). In low-power mode it confines system/user/machine.slice to the four LP-E CPUs, forces `intel_pstate` to active mode and moves the SoC power slider. |
 
-Both coexist with the existing `power-profiles-daemon` (PPD handles user
-profile, thermald handles thermal, intel-lpmd handles idle topology).
+Version 1.2 stopped enabling `intel-lpmd` by default. Intel labels 0.1.1 (the
+CachyOS build) a test release not meant for distributions, and upstream main
+no longer changes cpusets by default. A public Panther Lake A/B test (XPS 16,
+battery, balanced) found no significant idle-power gain and roughly doubled
+app launch time with it; apps started while confined also size their thread
+pools to four CPUs. Updating from 1.1 disables the service unless
+`INTEL_PERF_LPMD=1` is set. The earlier "parks idle work on a single LP-E
+core" and "≈2–2.5 W idle" claims were never measured on this laptop.
+
+`power-profiles-daemon` stays in charge of profiles. `thermald` reads its
+slider state; `intel-lpmd`, when enabled, touches the same `intel_pstate` and
+SoC-slider settings, so the three are not fully independent layers.
 
 This module ships **no payload files** — it's purely package install + service
 enable in the post-install hook. The patcher tracks it the same way it
