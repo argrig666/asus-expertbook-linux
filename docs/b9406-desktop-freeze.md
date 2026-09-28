@@ -5,7 +5,9 @@ B390 (`8086:b080`). PixArt haptic touchpad `093A:4F05`, ACPI name
 `ASCP1D80`, on `i2c_designware.0`.
 
 Two different failures both end with a frozen desktop. Check which one you
-have before changing boot parameters. A machine can have both.
+have before changing boot parameters. A machine can have both. On stock
+(non-CachyOS) 7.2.y kernels there is a third, trace-less one; see
+[Stock 7.2 kernels](#stock-72-kernels).
 
 The touchpad wedge below was logged on Omarchy 4.0.4 with stock
 `linux 7.2.3-arch1-3`. The same touchpad bus and the same panel exist on
@@ -111,6 +113,18 @@ journalctl -k -b --since "30 seconds ago" --no-pager | grep -c 'timeout waiting 
 
 Zero new lines and a cursor that moves means this incident is over.
 
+If the touchpad rebind does not clear the flood, rebind the I2C controller
+itself (it can hang the same way if the controller is fully stuck):
+
+```sh
+echo i2c_designware.0 | sudo tee /sys/bus/platform/drivers/i2c_designware/unbind
+sleep 1
+echo i2c_designware.0 | sudo tee /sys/bus/platform/drivers/i2c_designware/bind
+```
+
+Rebinding the controller recovered the same timeout loop on an AMD laptop with
+a PixArt pad ([kernel bugzilla 221190](https://bugzilla.kernel.org/show_bug.cgi?id=221190)).
+
 If the rebind hangs, or `irq/*-ASCP1D80` is already in `D`:
 
 - Do not `rmmod` the touchpad, the GPU, or audio. The stuck thread does not
@@ -129,6 +143,40 @@ poll `acpitz` or ASUS `hwmon` fan and temperature nodes from a status bar;
 `coretemp` is the safer CPU temperature source. The libinput pressure quirk
 (`touchpad-fix`) stops "Touch jump detected and discarded". It does not
 prevent this wedge.
+
+## Narrowing it down
+
+No upstream fix exists yet. These comparisons would tell kernel developers
+where to look:
+
+- **Kernel A/B.** Linux 7.2 changed `i2c-designware` (`f5cfe0a71588`, "Handle
+  active target cleanly"), and an Acer with an ELAN pad reports a similar
+  7.1→7.2 regression that the LTS kernel does not show
+  ([omarchy#11245](https://github.com/omacom/omarchy/issues/11245)). Run
+  6.18 LTS or 7.3-rc for a few days and compare.
+- **Runtime PM.** Both `0000:00:19.0` and `i2c_designware.0` runtime-suspend
+  after 1 s idle (`power/control=auto`). Pinning them on is a cheap test:
+  `echo on | sudo tee /sys/bus/pci/devices/0000:00:19.0/power/control /sys/bus/platform/devices/i2c_designware.0/power/control`
+  (resets at reboot).
+- **Sensor hub.** The ISHTP timeout that preceded one wedge appears when the
+  Intel Sensor Hub is runtime-suspended; `ish-firmware` keeps it on. Report
+  `cat /sys/bus/pci/devices/0000:00:12.0/power/control` with any new incident.
+
+If it still reproduces on 7.3-rc, report it to linux-i2c and linux-input with
+the journal. Do not unbind the audio driver as a recovery step either: an
+unbind oops on this machine's CS35L56 matches an IRQ lifetime bug with a fix
+still under review.
+
+## Stock 7.2 kernels
+
+Linux 7.2 carries only half of the fix for a trace-less hard freeze caused by
+display page tables and framebuffers in stolen memory (drm/xe #7513). The
+second half, `0687ec06f51b` ("drm/xe/display: Do not allocate into stolen for
+new framebuffers"), is in 7.3 and not in 7.2.y stable. Two X7 358H machines
+froze on stock 7.2 without it
+([CachyOS#986](https://github.com/CachyOS/linux-cachyos/issues/986)); CachyOS
+kernels carry it since 7.2.1. On Arch's or Omarchy's stock 7.2.y a freeze with
+no I2C flood and no PSR/DSB line can be this one; 7.3 or the 6.18 LTS avoids it.
 
 ## Put the display parameters back
 

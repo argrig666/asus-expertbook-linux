@@ -374,9 +374,8 @@ The `mismatch in vsc dp vsc sdp` error and `intel_modeset_verify.c`
 WARN that 7.2 logs on every HDR modeset are a separate false positive: the
 driver's VSC SDP readout rejects the revision 7 packet it emits itself for
 Panel Replay with colorimetry, so the state checker compares against zeros.
-Kernel commit `e2cb54fbe4c3` ("drm/i915/dp: Fix VSC SDP readout for Panel
-Replay with colorimetry") in Sultan Alsawaf's tree fixes that; upstream
-submission is pending.
+The upstream fix, "drm/i915/dp: Handle VSC SDP revision 7 in unpack"
+(`fd2e337ba66f`), is in drm-intel-next and should reach Linux 7.4.
 
 </details>
 
@@ -426,6 +425,34 @@ active the driver keeps PSR off, so the debugfs line reads `disabled`).
 GRUB users put the same three parameters on `GRUB_CMDLINE_LINUX_DEFAULT` in
 `/etc/default/grub` and run `grub-mkconfig -o /boot/grub/grub.cfg`; the
 modprobe.d half of the module still applies.
+
+</details>
+
+<details><summary><b>Known issues</b> — what PSR1 does not cover (Linux 7.2, Panther Lake)</summary>
+
+- `Selective fetch area calculation failed in pipe A` once per boot is an
+  informational fallback to a full-frame update. It is harmless and goes away
+  with PSR1, which does not use selective fetch.
+- **Stock 7.2.y kernels** (Arch, Omarchy) carry only half of the fix for the
+  trace-less hard freeze from display page tables in stolen memory
+  (drm/xe #7513). The second half, `0687ec06f51b` ("Do not allocate into
+  stolen for new framebuffers"), is in 7.3; CachyOS kernels carry it since
+  7.2.1 ([CachyOS#986](https://github.com/CachyOS/linux-cachyos/issues/986)).
+- `DSB 0 timed out` / `flip_done timed out` with VRR's short vblank is fixed by
+  `b201029ca695` ("Ensure a non-zero safe window from PTL onwards") in 7.3,
+  with no stable tag.
+- Fullscreen switches on a Panther Lake Samsung OLED under KDE have been
+  reported to cause plane faults and DSB poll errors on 7.2.7 (drm/xe #9385);
+  `KWIN_DRM_NO_DIRECT_SCANOUT=1` avoids them.
+- With PSR1 active, KWin may be unable to turn VRR on at runtime, because the
+  change needs a full modeset (drm/xe #9359).
+- A 5K Apple Studio Display on this CPU can stay black after a cold boot even
+  though the link trains; a physical replug brings it up (drm/xe #9153, open).
+- Poweroff or reboot can hang in `nhi_pci_remove` on 7.2.y with a
+  Thunderbolt/USB4 dock driving DisplayPort monitors; reproduced on a B9406CAA
+  with a CalDigit TS5. Fixes are queued for 7.3 with `Cc: stable`
+  ([CachyOS#1047](https://github.com/CachyOS/linux-cachyos/issues/1047)).
+  Unplug the dock before shutting down, or boot the 6.18 LTS kernel.
 
 </details>
 
