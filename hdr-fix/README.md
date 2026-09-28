@@ -97,6 +97,13 @@ running the module again on 0.4.0 or newer only cleans up and changes nothing.
 
 Then turn HDR on in System Settings > Display & Monitor.
 
+With HDR on, KWin shows the desktop and other SDR content at its "SDR
+brightness" reference (200 nits on the reference machine), not at the backlight
+level used before, so the desktop can look dimmer right after the switch. The
+panel's 1600 cd/m² peak is for HDR content. Raise the SDR brightness slider that
+appears next to the HDR toggle, or run
+`kscreen-doctor output.eDP-1.sdr-brightness.300` (value in nits).
+
 ## Uninstall
 
 ```sh
