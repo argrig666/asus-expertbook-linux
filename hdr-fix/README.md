@@ -74,8 +74,10 @@ Install:
    rerun the module if the toggle disappears and the new package still lacks
    the fix.
 
-Once the system package is 0.4.0 or newer, KWin links `.so.4`, which has the
-fix, and the module removes itself on the next install.
+The upgrade to libdisplay-info 0.4.0 is such a package change, so the hook
+retires the override then. KWin rebuilt against 0.4.0 links `.so.4`, which
+reads DisplayID 2.0 itself, and would ignore the `.so.3` override anyway;
+running the module again on 0.4.0 or newer only cleans up and changes nothing.
 
 ## Install
 
