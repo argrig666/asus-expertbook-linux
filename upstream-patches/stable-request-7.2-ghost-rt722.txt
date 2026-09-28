@@ -1,0 +1,37 @@
+To: stable@vger.kernel.org
+Cc: Charles Keepax <ckeepax@opensource.cirrus.com>, Vinod Koul <vkoul@kernel.org>,
+    linux-sound@vger.kernel.org
+Subject: Request: 7.2.y backport of three soundwire ghost-Realtek quirks
+
+Hello,
+
+Please backport these three commits from 7.3-rc1 to 7.2.y:
+
+  90af3209742d ("soundwire: dmi-quirks: Disable ghost Realtek on Asus Expertbook")
+  ca02ffd4975c ("soundwire: dmi-quirks: Disable ghost Realtek on Asus Zenbook Duo")
+  5b08a3afd299 ("soundwire: dmi-quirks: Disable ghost Realtek on Asus ROG Zephyrus Duo")
+
+Why: on these laptops the firmware describes an RT722 that is not fitted.
+On 7.2 the SOF SoundWire machine driver then creates a duplicate
+SDW3-Playback-SimpleJack link, sof_sdw fails with -EEXIST / -12, and no ALSA
+card is registered at all, so the machines have no audio on any 7.2.y
+kernel:
+
+  sysfs: cannot create duplicate filename '/devices/pci0000:00/0000:00:1f.3/sof_sdw/SDW3-Playback-SimpleJack'
+  kobject: kobject_add_internal failed for SDW3-Playback-SimpleJack with -EEXIST, ...
+  sof_sdw sof_sdw: probe with driver sof_sdw failed with error -12
+
+The same fix for a fourth ASUS model, 6d49beec658f ("soundwire: dmi-quirks:
+Disable ghost Realtek on Asus GX651AX"), carried
+"Fixes: 45cf24da0a10 ("ASoC: Intel: soc-acpi-intel-ptl-match: Remove
+unnecessary cs42l43 match")" and "Cc: stable@vger.kernel.org # 7.2.x" and is
+already in 7.2.8. The three commits above lack those tags only, so they were
+never picked up.
+
+All three apply cleanly, in this order, to drivers/soundwire/dmi-quirks.c in
+v7.2.8. 90af3209742d closes the B9406CAA report in thesofproject/linux#5828.
+Until it reaches 7.2.y, owners of that laptop rebuild snd-soc-sof-sdw with
+an out-of-tree filter for the same unattached RT722 to get a card at all.
+
+Thanks,
+burakgon

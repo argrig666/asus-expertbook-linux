@@ -1,0 +1,64 @@
+From: burakgon <burakgon12@gmail.com>
+Subject: [PATCH] drm/i915/display: Pin ASUS ExpertBook Ultra B9406CAA to PSR1
+
+The Samsung ATNA40LE01 OLED in the ASUS ExpertBook Ultra B9406CAA (Panther
+Lake, PCI subsystem 0x1043:0x15e4, sink OUI 00:aa:01) advertises Panel
+Replay Selective Update with Early Transport over a DSC link, which is what
+the driver picks by default. On this panel that mode:
+
+  - logs "Timed out waiting PSR idle state", "[CRTC:151:pipe A] DSB 0 poll
+    error" and "CPU pipe A FIFO underrun" with visible corruption (7.2.0);
+  - flickers, and smears with VRR enabled (7.2.4);
+  - comes up desaturated after every HDR-enabling modeset and leaves stale
+    content on screen (7.2.2); dropping only Early Transport keeps the
+    washed-out colors and slows the cursor to ~20 fps.
+
+Disabling Panel Replay alone is not enough: the driver then falls back to
+PSR2 selective update over the DSC link, and every update paints red/green
+garbage. PSR1 is clean across all of the above, and self-refresh still
+saves power on a static screen.
+
+Apply both existing quirks to this machine, QUIRK_DISABLE_EDP_PANEL_REPLAY
+for the panel and QUIRK_DISABLE_PSR2 for the platform, which leaves PSR1.
+This is what owners run today with xe.enable_panel_replay=0 plus
+xe.enable_psr=1 (or xe.enable_psr2_sel_fetch=0) on the kernel command line;
+the quirks scope it to this laptop instead of changing the defaults
+globally.
+
+Tested with the equivalent module parameters on several B9406CAA units,
+Linux 7.1.6 to 7.2.8. The quirk entries themselves have not yet been tested
+in a built kernel.
+
+Link: https://github.com/burakgon/asus-expertbook-linux/issues/7
+---
+ drivers/gpu/drm/i915/display/intel_quirks.c | 11 +++++++++++
+ 1 file changed, 11 insertions(+)
+
+diff --git a/drivers/gpu/drm/i915/display/intel_quirks.c b/drivers/gpu/drm/i915/display/intel_quirks.c
+--- a/drivers/gpu/drm/i915/display/intel_quirks.c
++++ b/drivers/gpu/drm/i915/display/intel_quirks.c
+@@ -262,6 +262,9 @@
+ 
+ 	/* Xiaomi Book Pro 14 2026 */
+ 	{ 0xb081, 0x1d72, 0x2424, quirk_disable_psr2 },
++
++	/* ASUS ExpertBook Ultra B9406CAA */
++	{ 0xb080, 0x1043, 0x15e4, quirk_disable_psr2 },
+ };
+ 
+ static const struct intel_dpcd_quirk intel_dpcd_quirks[] = {
+@@ -289,6 +292,14 @@
+ 		.sink_oui = SINK_OUI(0x00, 0x22, 0xb9),
+ 		.hook = quirk_disable_edp_panel_replay,
+ 	},
++	/* ASUS ExpertBook Ultra B9406CAA, Samsung ATNA40LE01 OLED */
++	{
++		.device = DEVICE_ID_ANY,
++		.subsystem_vendor = 0x1043,
++		.subsystem_device = 0x15e4,
++		.sink_oui = SINK_OUI(0x00, 0xaa, 0x01),
++		.hook = quirk_disable_edp_panel_replay,
++	},
+ };
+ 
+ void intel_init_quirks(struct intel_display *display)
