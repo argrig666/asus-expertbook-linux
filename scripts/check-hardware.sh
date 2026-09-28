@@ -168,19 +168,19 @@ for d in /sys/bus/pci/devices/*; do
 done
 if [[ -n $ish_pci ]]; then
   ish_vendor=$(cat /sys/class/dmi/id/sys_vendor 2>/dev/null || echo '')
-  ish_family=$(cat /sys/class/dmi/id/product_family 2>/dev/null || echo '')
+  ish_product=$(cat /sys/class/dmi/id/product_name 2>/dev/null || echo '')
   ish_name=""
-  if command -v python3 >/dev/null 2>&1 && [[ -n $ish_vendor && -n $ish_family ]]; then
-    ish_name="$(python3 -c 'import sys,zlib; print("ish_ptl_%08x_%08x.bin" % (zlib.crc32(sys.argv[1].encode()), zlib.crc32(sys.argv[2].encode())))' "$ish_vendor" "$ish_family" 2>/dev/null)"
+  if command -v python3 >/dev/null 2>&1 && [[ -n $ish_vendor && -n $ish_product ]]; then
+    ish_name="$(python3 -c 'import sys,zlib; print("ish_ptl_%08x_%08x.bin" % (zlib.crc32(sys.argv[1].encode()), zlib.crc32(sys.argv[2].encode())))' "$ish_vendor" "$ish_product" 2>/dev/null)"
   fi
   ish_clients=0
   for d in /sys/bus/ishtp/devices/*; do [[ -e $d ]] && ish_clients=$(( ish_clients + 1 )); done
   if (( ish_clients > 0 )); then
     ok "ISH $ish_pci (8086:e445) firmware running — $ish_clients ishtp client devices"
-  elif [[ -n $ish_name && -f /lib/firmware/intel/ish/$ish_name ]]; then
+  elif [[ -n $ish_name && -f /lib/firmware/updates/intel/ish/$ish_name ]]; then
     warn "ISH $ish_pci: $ish_name is installed but no ishtp client devices yet — reboot (or reload intel_ish_ipc)"
   else
-    warn "ISH $ish_pci: no ishtp client devices and no per-OEM image ${ish_name:-ish_ptl_<vendor>_<family>.bin} — ish-firmware applies (needed for the ambient light sensor)"
+    warn "ISH $ish_pci: no ishtp client devices and no per-OEM image ${ish_name:-ish_ptl_<vendor>_<product>.bin} — ish-firmware applies (needed for the ambient light sensor)"
   fi
 else
   note "no Intel Sensor Hub 8086:e445 on PCI — ish-firmware does not apply"

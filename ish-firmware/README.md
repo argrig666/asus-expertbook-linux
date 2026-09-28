@@ -31,14 +31,16 @@ uploads into its RAM at every boot (`intel_ish_ipc` → "ISH loader"). The image
 must be signed for the OEM board; a generic one is rejected.
 
 Before falling back to the generic `intel/ish/ish_ptl.bin`, the loader
-requests a per-OEM file:
+(`drivers/hid/intel-ish-hid/ishtp/loader.c`) requests per-OEM files named from
+CRC-32s of the DMI strings, most specific first. Kernel 7.0 put
+`product_family` patterns in front; every kernel with Panther Lake ISH support
+(6.14+) also tries vendor + product name:
 
 ```
-intel/ish/ish_<platform>_<crc32(sys_vendor)>_<crc32(product_family)>.bin
+intel/ish/ish_<platform>_<crc32(sys_vendor)>_<crc32(product_name)>.bin
 ```
 
-The rule is not documented in `WHENCE`, but it reproduces linux-firmware's own
-entries exactly:
+The CRC rule reproduces linux-firmware's own entries exactly:
 
 | DMI string | CRC-32 | linux-firmware file |
 |---|---|---|
@@ -46,7 +48,7 @@ entries exactly:
 | `ThinkPad X1 Carbon Gen 14` (product_family) | `75d6ebe2` | ↑ |
 | `Dell Inc.` | `39ceeaf8` | `ish_ptl_39ceeaf8.bin` |
 | `ASUS` | `59b8d9f2` | **none shipped** |
-| `ASUS EXPERTBOOK` (product_family) | `84881981` | **none shipped** |
+| `ASUS EXPERTBOOK B9406CAA` (product_name) | `6f5619d0` | **none shipped** |
 
 linux-firmware 20260810 carries ISH Panther Lake images from Lenovo, Dell and
 HP only, each submitted by that vendor under its own licence file. There is no
@@ -73,11 +75,28 @@ is **not** redistributed here and the Windows program is never run.
    ASUS artifact (5 MB) — no "latest version" query.
 3. Checks the outer SHA-256, carves the embedded 7z resource at its fixed
    offset, extracts, checks the image SHA-256.
-4. Installs it as `/lib/firmware/intel/ish/ish_ptl_59b8d9f2_84881981.bin`
-   (name computed from the live DMI strings; falls back to the constant when
-   `python3` is absent).
-5. Reloads `intel_ish_ipc` so the new image is uploaded without a reboot, and
-   reports the `als` device.
+4. Installs it as `/lib/firmware/updates/intel/ish/ish_ptl_59b8d9f2_6f5619d0.bin`
+   (vendor + product name, computed from the live DMI strings; falls back to
+   the constant when `python3` is absent). `/lib/firmware/updates` is searched
+   before `/lib/firmware`, so nothing lands in directories linux-firmware owns
+   and no pacman `NoExtract` pin is needed. The vendor + product-name pattern
+   also loads on 6.14–6.19 (including the 6.18 LTS kernel) and is scoped to
+   this model rather than to every Panther Lake "ASUS EXPERTBOOK".
+5. Installs `/etc/udev/rules.d/95-asus-expertbook-ish-keep-on.rules`, which
+   pins the ISH PCI function to `power/control=on`. `intel_ish_ipc` has no
+   runtime PM, so when a power tool (powertop `--auto-tune`, TLP) sets it to
+   `auto`, the PCI core suspends it to D3hot, the sensor hub stops answering
+   (`timeout waiting for response from ISHTP device`) and `als` disappears.
+6. Reloads `intel_ish_ipc` whenever the image changed, so the new file is
+   uploaded without a reboot, restarts `keyboard-backlight-auto` if it runs,
+   and reports the `als` device.
+
+An earlier revision of this module used the vendor + family name
+(`ish_ptl_59b8d9f2_84881981.bin`) under `/lib/firmware/intel/ish`; install
+removes that copy when its hash matches. A hand-placed, package-less
+`/lib/firmware/intel/ish/ish_ptl.bin` (the manual workaround, usually with a
+`NoExtract` pin in `/etc/pacman.conf`) is reported by `status` and is no longer
+needed.
 
 Nothing is flashed. The image lives in ISH RAM for the duration of the boot;
 `./patch.sh uninstall ish-firmware` deletes the file and the machine is back
@@ -93,9 +112,10 @@ to the generic-image behaviour after the next reboot.
 Expected status on this laptop:
 
 ```
-  expected: /lib/firmware/intel/ish/ish_ptl_59b8d9f2_84881981.bin
+  expected: /lib/firmware/updates/intel/ish/ish_ptl_59b8d9f2_6f5619d0.bin
   image:    verified ASUS-signed 5.8.1.7783
-  loader:   intel/ish/ish_ptl_59b8d9f2_84881981.bin → FW 5.8.1.7783
+  loader:   intel/ish/ish_ptl_59b8d9f2_6f5619d0.bin → FW 5.8.1.7783
+  runtime PM: kept on
   ishtp:    5 client devices enumerated
   als:      iio:device1 reading 24.8 lux
 ```
@@ -103,7 +123,7 @@ Expected status on this laptop:
 And in the kernel log:
 
 ```
-intel_ish_ipc 0000:00:12.0: ISH loader: load firmware: intel/ish/ish_ptl_59b8d9f2_84881981.bin
+intel_ish_ipc 0000:00:12.0: ISH loader: load firmware: intel/ish/ish_ptl_59b8d9f2_6f5619d0.bin
 intel_ish_ipc 0000:00:12.0: ISH loader: firmware loaded. size:420352
 intel_ish_ipc 0000:00:12.0: ISH loader: FW base version: 5.8.1.7783
 ish-hid {33AECD58-...}: [hid-ish]: enum_devices_done OK, num_hid_devices=1

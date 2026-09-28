@@ -14,16 +14,27 @@
 # and no ISH client device is ever enumerated, so /sys/bus/iio has no `als`
 # device and keyboard-backlight-auto has nothing to read.
 #
-# Before falling back to the generic file the kernel looks for a per-OEM
-# image named
+# Before falling back to the generic file the kernel's ISH loader
+# (drivers/hid/intel-ish-hid/ishtp/loader.c) tries per-OEM names built from
+# CRC-32s of the DMI strings, most specific first. Kernel 7.0 added
+# product-family patterns in front; every kernel with Panther Lake ISH support
+# (6.14+) also tries
 #
-#   intel/ish/ish_<platform>_<crc32(sys_vendor)>_<crc32(product_family)>.bin
+#   intel/ish/ish_<platform>_<crc32(sys_vendor)>_<crc32(product_name)>.bin
 #
 # (verified against linux-firmware's own entries: crc32("LENOVO") =
 # 53c4ffad and crc32("ThinkPad X1 Carbon Gen 14") = 75d6ebe2 reproduce
 # ish_ptl_53c4ffad_75d6ebe2.bin exactly). linux-firmware ships such images
 # for Lenovo, Dell and HP only; there is no ASUS entry. On this board the
-# expected name is ish_ptl_59b8d9f2_84881981.bin.
+# vendor + product-name file is ish_ptl_59b8d9f2_6f5619d0.bin
+# (crc32("ASUS"), crc32("ASUS EXPERTBOOK B9406CAA")). That pattern is used
+# instead of vendor + family (ish_ptl_59b8d9f2_84881981.bin) because it also
+# loads on 6.14-6.19, including the 6.18 LTS kernel, and it is scoped to this
+# model rather than to every PTL "ASUS EXPERTBOOK".
+#
+# The image goes to /lib/firmware/updates, which the firmware loader searches
+# before /lib/firmware, so nothing is written into directories linux-firmware
+# owns and no pacman NoExtract pin is needed.
 #
 # ASUS distributes the matching, ASUS-signed image inside its Windows
 # "Intel Sensor Hub" driver package as
@@ -33,6 +44,12 @@
 # verified local copy), checks the outer SHA-256, carves the embedded 7z
 # resource, checks the image SHA-256 and installs it under the name the kernel
 # expects. The image is uploaded to ISH RAM at each boot; nothing is flashed.
+#
+# The ISH PCI driver has system-sleep PM callbacks only, no runtime PM. If a
+# power tool (powertop --auto-tune, TLP) sets the function's power/control to
+# "auto", the PCI core runtime-suspends it to D3hot and the sensor hub stops
+# answering ("timeout waiting for response from ISHTP device"), which drops
+# the als device. A udev rule pins power/control=on for 8086:e445.
 
 MODULE_NAME="ish-firmware"
 MODULE_DESC="B9406CAA ambient light sensor: install ASUS's signed Intel Sensor Hub image the kernel looks for"
@@ -40,11 +57,17 @@ MODULE_VERSION="5.8.1.7783"
 MODULE_FILES=()
 
 ISH_MODEL="B9406CAA"
-ISH_FW_DIR="/lib/firmware/intel/ish"
+ISH_FW_DIR="/lib/firmware/updates/intel/ish"
+# Where the first revision of this module put the image, under
+# vendor + family. Only verified copies are removed from there.
+ISH_FW_LEGACY_DIR="/lib/firmware/intel/ish"
+ISH_FW_LEGACY_NAME="ish_ptl_59b8d9f2_84881981.bin"
 ISH_FW_PLATFORM="ptl"
-# crc32("ASUS") = 59b8d9f2, crc32("ASUS EXPERTBOOK") = 84881981. Used when
-# python3 is unavailable to compute the name from the live DMI strings.
-ISH_FW_FALLBACK_NAME="ish_ptl_59b8d9f2_84881981.bin"
+# crc32("ASUS") = 59b8d9f2, crc32("ASUS EXPERTBOOK B9406CAA") = 6f5619d0. Used
+# when python3 is unavailable to compute the name from the live DMI strings.
+ISH_FW_FALLBACK_NAME="ish_ptl_59b8d9f2_6f5619d0.bin"
+ISH_KEEP_ON_RULE="/etc/udev/rules.d/95-asus-expertbook-ish-keep-on.rules"
+ISH_PCI_DEV="/sys/bus/pci/devices/0000:00:12.0"
 ISH_FW_SHA256="3f5c273dd625eaff9ef2fba95600563e14c1d7d357fa10b7de8c2dc5de3b7e51"
 ISH_FW_IMAGE_NAME="AsusSign_ishS_SI_B9406CAA_5.8.1.7783.bin"
 
@@ -62,16 +85,16 @@ ish_is_supported_model() {
   [[ $board == "$ISH_MODEL" ]]
 }
 
-# Name the kernel's ISH loader requests before the generic fallback.
+# Vendor + product-name file the ISH loader requests before the generic one.
 ish_fw_name() {
-  local vendor family
+  local vendor product
   vendor="$(tr -d '\n' </sys/class/dmi/id/sys_vendor 2>/dev/null || true)"
-  family="$(tr -d '\n' </sys/class/dmi/id/product_family 2>/dev/null || true)"
-  if command -v python3 >/dev/null 2>&1 && [[ -n $vendor && -n $family ]]; then
-    python3 - "$ISH_FW_PLATFORM" "$vendor" "$family" <<'PY'
+  product="$(tr -d '\n' </sys/class/dmi/id/product_name 2>/dev/null || true)"
+  if command -v python3 >/dev/null 2>&1 && [[ -n $vendor && -n $product ]]; then
+    python3 - "$ISH_FW_PLATFORM" "$vendor" "$product" <<'PY'
 import sys, zlib
-plat, vendor, family = sys.argv[1:4]
-print("ish_%s_%08x_%08x.bin" % (plat, zlib.crc32(vendor.encode()), zlib.crc32(family.encode())))
+plat, vendor, product = sys.argv[1:4]
+print("ish_%s_%08x_%08x.bin" % (plat, zlib.crc32(vendor.encode()), zlib.crc32(product.encode())))
 PY
   else
     printf '%s\n' "$ISH_FW_FALLBACK_NAME"
@@ -171,6 +194,38 @@ ish_reload_driver() {
   return 1
 }
 
+# Pin the ISH PCI function to power/control=on (see the header).
+ish_install_keep_on_rule() {
+  if ! cmp -s "$MODULE_DIR/${ISH_KEEP_ON_RULE##*/}" "$ISH_KEEP_ON_RULE"; then
+    install -D -m 0644 "$MODULE_DIR/${ISH_KEEP_ON_RULE##*/}" "$ISH_KEEP_ON_RULE"
+    log "[ish-firmware] installed $ISH_KEEP_ON_RULE"
+  fi
+  if [[ -w $ISH_PCI_DEV/power/control ]]; then
+    echo on >"$ISH_PCI_DEV/power/control" 2>/dev/null || true
+  fi
+}
+
+# The first revision of this module wrote the image next to linux-firmware's
+# own files under the vendor + family name. On 7.0+ that name is tried before
+# ours, so a leftover copy would keep being loaded. Only a verified copy goes.
+ish_remove_legacy_copy() {
+  local legacy="$ISH_FW_LEGACY_DIR/$ISH_FW_LEGACY_NAME"
+  ish_file_verified "$legacy" || return 1
+  rm -f -- "$legacy"
+  log "[ish-firmware] removed the earlier copy at $legacy"
+}
+
+# A hand-placed intel/ish/ish_ptl.bin that no package owns: the manual
+# workaround from before this module (often paired with a pacman NoExtract pin
+# on usr/lib/firmware/intel/ish/ish_ptl.bin*). The vendor-specific name is
+# looked up first, so the override is no longer needed.
+ish_manual_override() {
+  local f="$ISH_FW_LEGACY_DIR/ish_ptl.bin"
+  [[ -f $f ]] || return 1
+  command -v pacman >/dev/null 2>&1 || return 1
+  ! pacman -Qqo "$f" >/dev/null 2>&1
+}
+
 module_install_state() {
   local path
   if ! ish_is_supported_model; then
@@ -190,7 +245,7 @@ module_install_state() {
 }
 
 module_install() {
-  local path package package_hash archive image image_hash tmp
+  local path package package_hash archive image image_hash tmp changed=0
 
   if ! ish_is_supported_model; then
     warn "[ish-firmware] this module only supports ASUS $ISH_MODEL (the image is ASUS-signed for this board)"
@@ -247,14 +302,28 @@ module_install() {
     if [[ ${path##*/} != "$ISH_FW_FALLBACK_NAME" ]]; then
       install -D -m 0644 "$image" "$ISH_FW_DIR/$ISH_FW_FALLBACK_NAME"
     fi
+    changed=1
   fi
 
-  if ish_running; then
-    ok "[ish-firmware] ISH firmware is running (ishtp client devices present)"
-  elif ish_reload_driver; then
-    ok "[ish-firmware] ISH firmware loaded without a reboot"
+  ish_remove_legacy_copy && changed=1
+  ish_install_keep_on_rule
+
+  # A running ISH keeps the image it booted with, so a new or moved file only
+  # takes effect after the driver uploads it again.
+  if (( changed )) || ! ish_running; then
+    if ish_reload_driver; then
+      ok "[ish-firmware] ISH restarted with $(ish_fw_name)"
+      systemctl try-restart kbd-backlight-auto.service 2>/dev/null || true
+    else
+      echo "Reboot to let the kernel upload the new ISH image."
+    fi
   else
-    echo "Reboot to let the kernel upload the new ISH image."
+    ok "[ish-firmware] ISH firmware is running (ishtp client devices present)"
+  fi
+
+  if ish_manual_override; then
+    warn "[ish-firmware] $ISH_FW_LEGACY_DIR/ish_ptl.bin is not owned by any package (a manual workaround?)."
+    warn "[ish-firmware] It is no longer needed: remove it, drop any NoExtract pin on it in /etc/pacman.conf and reinstall linux-firmware-intel."
   fi
 
   local als
@@ -268,7 +337,7 @@ module_install() {
 module_post_uninstall() {
   local path
   path="$(ish_fw_path)"
-  rm -f -- "$path" "$ISH_FW_DIR/$ISH_FW_FALLBACK_NAME"
+  rm -f -- "$path" "$ISH_FW_DIR/$ISH_FW_FALLBACK_NAME" "$ISH_KEEP_ON_RULE"
   echo "Removed the ASUS ISH image. Reboot (or reload intel_ish_ipc) to return to the"
   echo "generic linux-firmware image, which this board rejects; the 'als' device will disappear."
 }
@@ -298,13 +367,32 @@ module_status_extra() {
   loaded="$(sed -n 's/.*ISH loader: load firmware: \(.*\)$/\1/p' <<<"$kmsg" | tail -n1)"
   base="$(sed -n 's/.*ISH loader: FW base version: \(.*\)$/\1/p' <<<"$kmsg" | tail -n1)"
   failed="$(grep -c 'ISH loader: cmd [0-9]* failed' <<<"$kmsg" || true)"
-  if [[ -n $base ]]; then
+  if [[ -n $base && ${loaded##*/} == "${path##*/}" ]]; then
     printf '  loader:   %s%s → FW %s%s\n' "$c_ok" "${loaded:-?}" "$base" "$c_off"
+  elif [[ -n $base ]]; then
+    printf '  loader:   %s%s → FW %s (not the verified image; reload intel_ish_ipc or reboot)%s\n' \
+      "$c_warn" "${loaded:-?}" "$base" "$c_off"
   elif [[ -n $loaded ]]; then
     printf '  loader:   %s%s rejected (%s failed attempts this boot)%s\n' "$c_warn" "$loaded" "${failed:-?}" "$c_off"
   else
     printf '  loader:   %sno ISH loader message this boot (driver not loaded?)%s\n' "$c_dim" "$c_off"
   fi
+
+  if ish_manual_override; then
+    printf '  override: %s%s/ish_ptl.bin is not owned by any package; no longer needed%s\n' \
+      "$c_warn" "$ISH_FW_LEGACY_DIR" "$c_off"
+  fi
+  if [[ -f $ISH_FW_LEGACY_DIR/$ISH_FW_LEGACY_NAME ]]; then
+    printf '  legacy:   %s%s/%s is loaded first on 7.0+; reinstall to remove it%s\n' \
+      "$c_warn" "$ISH_FW_LEGACY_DIR" "$ISH_FW_LEGACY_NAME" "$c_off"
+  fi
+
+  local pm
+  pm="$(cat "$ISH_PCI_DEV/power/control" 2>/dev/null || true)"
+  case $pm in
+    on)   printf '  runtime PM: %skept on%s\n' "$c_ok" "$c_off" ;;
+    auto) printf '  runtime PM: %sauto — the ISH can suspend and drop the sensor%s\n' "$c_warn" "$c_off" ;;
+  esac
 
   for d in /sys/bus/ishtp/devices/*; do
     [[ -e $d ]] && n=$(( n + 1 ))

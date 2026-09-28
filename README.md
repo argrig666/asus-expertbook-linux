@@ -663,7 +663,8 @@ ESRT GUID and local-package paths.
 The ambient light sensor sits behind the Intel Integrated Sensor Hub
 (`00:12.0`, `8086:e445`), which only runs after the kernel uploads an
 OEM-signed image at boot. Before the generic `ish_ptl.bin` the loader asks for
-`intel/ish/ish_ptl_<crc32(sys_vendor)>_<crc32(product_family)>.bin` — a rule
+per-OEM names built from CRC-32s of the DMI strings, such as
+`intel/ish/ish_ptl_<crc32(sys_vendor)>_<crc32(product_name)>.bin` — a rule
 that reproduces linux-firmware's Lenovo/Dell entries exactly — but linux-firmware
 ships no ASUS image, and this board rejects the generic one
 (`ISH loader: cmd 2 failed 10`). Result: no `als` device, ever.
@@ -672,9 +673,11 @@ Same approach as `camera-firmware`: the module downloads (or uses a verified
 local copy of) ASUS's fixed **Intel Sensor Hub V5.8.62.0** package, checks the
 pinned SHA-256 of the EXE and of the embedded
 `AsusSign_ishS_SI_B9406CAA_5.8.1.7783.bin`, installs it as
-`ish_ptl_59b8d9f2_84881981.bin` and reloads `intel_ish_ipc`. Nothing is
-flashed and nothing ASUS-owned is redistributed. Install it before
-`keyboard-backlight-auto`.
+`/lib/firmware/updates/intel/ish/ish_ptl_59b8d9f2_6f5619d0.bin` (vendor +
+product name, which every Panther Lake kernel from 6.14 on tries) and reloads
+`intel_ish_ipc`. A udev rule keeps the ISH out of runtime suspend, which
+`intel_ish_ipc` does not support. Nothing is flashed and nothing ASUS-owned is
+redistributed. Install it before `keyboard-backlight-auto`.
 
 See [`ish-firmware/README.md`](ish-firmware/README.md) for the evidence,
 hashes and the naming rule.

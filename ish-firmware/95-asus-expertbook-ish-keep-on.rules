@@ -1,0 +1,9 @@
+# Installed by asus-expertbook-linux (ish-firmware).
+#
+# The Intel Sensor Hub PCI driver (intel_ish_ipc) has system-sleep PM
+# callbacks only, no runtime PM. When power/control is "auto" (powertop
+# --auto-tune, TLP and similar set it for every PCI function), the PCI core
+# runtime-suspends the ISH to D3hot, the sensor hub stops answering
+# ("timeout waiting for response from ISHTP device") and the ambient light
+# sensor disappears until the driver is reloaded. Keep it on.
+ACTION=="add", SUBSYSTEM=="pci", ATTR{vendor}=="0x8086", ATTR{device}=="0xe445", ATTR{power/control}="on"
