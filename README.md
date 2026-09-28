@@ -311,12 +311,16 @@ Omarchy ships; verified at ~2.1 Gbit/s over 160 MHz HE here:
 |---|---|---|
 | `iwlwifi-disable-eht.conf` | `/etc/modprobe.d/` | `options iwlwifi disable_11be=Y` — disables EHT / Wi-Fi 7; the link falls back to stable Wi-Fi 6 / HE. |
 
-Linux 7.2 additionally loads C106 firmware, which can emit thousands of
+Linux 7.2 additionally loads C106 firmware, and the driver can log thousands of
 `missed beacons ... but receiving data` warnings while the link remains strong,
-fast and connected. Status shows the loaded firmware and count; it does not
-silence the warning or rewrite packaged firmware. Version 2.1 retires the old
-global ASPM-performance, power-scheme and offload tunables because they did not
-stop C106's warnings and were broader than the demonstrated bug.
+fast and connected. On the reference machine the bursts followed a single
+access point every 30–37 minutes and vanished on others, which points at an AP
+pausing its beacons (off-channel scanning, for example) more than at C106. Status
+shows the loaded firmware and count; it does not silence the warning or rewrite
+packaged firmware. Version 2.1 retires the old global ASPM-performance,
+power-scheme and offload tunables because they did not stop the warnings and
+were broader than the demonstrated bug. Linux 7.3 loads C107 and 7.4 is set to
+take C108; EHT stays off until a retest there shows the RX collapse is gone.
 
 This is a deliberate **Wi-Fi 7 → Wi-Fi 6** downgrade. Normal power management,
 offloads and `iwlwifi.bt_coex_active=Y` are retained, so Bluetooth coexistence

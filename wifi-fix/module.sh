@@ -16,12 +16,14 @@
 #     /etc/modprobe.d/iwlwifi-disable-eht.conf. Remove once Intel fixes
 #     the iwlwifi EHT path upstream.
 #
-# Linux 7.2 raises Panther Lake's supported firmware from C102 to C106. C106 can
-# emit a large number of "missed beacons ... but receiving data" warnings even
-# on a strong, fast link with no retries or disconnects. That is a separate
-# firmware/driver accounting and log-rate problem; the driver explicitly stays
-# connected. This module reports the firmware and warning count but does not
-# hide the log or destructively pin an older firmware.
+# Linux 7.2 raises Panther Lake's supported firmware from C102 to C106 (7.3
+# accepts C107). A large number of "missed beacons ... but receiving data"
+# warnings can appear even on a strong, fast link with no retries or
+# disconnects; the driver explicitly stays connected. On the reference machine
+# the bursts followed one access point, every 30-37 minutes, which fits an AP
+# that stops beaconing while it scans off-channel better than a C106 counting
+# bug. This module reports the firmware and warning count but does not hide
+# the log or destructively pin an older firmware.
 #
 # Earlier versions also forced iwlmld power_scheme=1, disabled PCIe ASPM
 # globally and disabled TSO/GSO/GRO. Those broad, power-hungry tunables did not

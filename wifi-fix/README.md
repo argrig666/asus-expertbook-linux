@@ -23,10 +23,20 @@ missed beacons exceeds threshold, but receiving data. Stay connected, Expect bug
 
 The message means the missed-beacon counter crossed the driver's threshold but
 frames were still received recently, so the driver deliberately keeps the
-connection. On the reference machine the warning occurred with a strong signal,
-about 2.1 Gbit/s negotiated rate, no TX failures and no spontaneous disconnect.
-It is therefore tracked as a C106 driver/firmware accounting and log-rate issue,
-not proof that the HE link failed.
+connection. It is an unthrottled `IWL_WARN` in `mld/link.c`, still unchanged in
+7.3. On the reference machine the warning occurred with a strong signal, about
+2.1 Gbit/s negotiated rate, no TX failures and no spontaneous disconnect.
+
+It looks tied to the access point rather than to C106 alone. One two-day boot
+logged 4952 lines in 47 bursts of 2–16 s, every 30–37 minutes, all on one
+BSSID; the next 18-hour boot, same C106 on other access points, logged none.
+An AP that stops beaconing for a few seconds, for example during periodic
+off-channel scanning, produces exactly this message. It is therefore not proof
+that the HE link failed, and not settled as a firmware bug either.
+
+Linux 7.3 accepts C107 (`107.1b444747.0`, already in linux-firmware 20260916);
+C108 is in linux-firmware main and the kernel bump is queued for 7.4. Retest
+the same AP there, and with its background scanning off, before blaming C106.
 
 `./patch.sh status wifi-fix` reports:
 
