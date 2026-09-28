@@ -1,0 +1,134 @@
+#!/usr/bin/env bash
+# power-profile-bridge: apply power-profiles-daemon's active profile to every
+# platform-profile handler individually.
+#
+# Panther Lake registers two handlers: Intel's "SoC Power Slider"
+# (low-power/balanced/performance) and asus-wmi (quiet/balanced/performance).
+# The legacy /sys/firmware/acpi/platform_profile only offers the choices they
+# share, balanced and performance, so power-profiles-daemon's power-saver can
+# only write "balanced" there: the slider never reaches low-power and the fans
+# never reach quiet. This daemon follows ActiveProfile over D-Bus and writes
+# each handler's own /sys/class/platform-profile/*/profile.
+#
+# When the handlers disagree the legacy file reads "custom";
+# power-profiles-daemon ignores that value, so the two do not fight. It can
+# also skip writing a profile it believes is already set, which is why every
+# profile is applied here, not only power-saver. Handlers are re-applied after
+# resume and when the daemon starts.
+#
+# Usage: power-profile-bridge            run (systemd service)
+#        power-profile-bridge --status   print the mapping, touch nothing
+#        power-profile-bridge --apply P  apply profile P once and exit
+set -u
+
+CONF=${PPB_CONF:-/etc/power-profile-bridge.conf}
+SYSFS=${PPB_SYSFS:-/sys}
+BUS=org.freedesktop.UPower.PowerProfiles
+OBJ=/org/freedesktop/UPower/PowerProfiles
+
+log() { printf '%s\n' "$*"; }
+
+# Config lines: <ppd-profile>.<handler name>=<choice>, e.g.
+#   power-saver.asus-wmi=balanced
+conf_get() {
+  local prof=$1 name=$2 key line
+  [[ -r $CONF ]] || return 1
+  key="$prof.$name="
+  while IFS= read -r line; do
+    [[ $line == "$key"* ]] || continue
+    printf '%s\n' "${line#"$key"}"
+    return 0
+  done < <(sed -e 's/[[:space:]]*#.*$//' -e 's/[[:space:]]*=[[:space:]]*/=/' "$CONF")
+  return 1
+}
+
+# Choice for handler directory $1 under power-profiles-daemon profile $2.
+pick() {
+  local dir=$1 prof=$2 name choices want c
+  name=$(<"$dir/name") || return 1
+  choices=" $(<"$dir/choices") "
+  if want=$(conf_get "$prof" "$name") && [[ $choices == *" $want "* ]]; then
+    printf '%s\n' "$want"
+    return 0
+  fi
+  case $prof in
+    power-saver) set -- low-power quiet cool balanced ;;
+    performance) set -- performance balanced-performance balanced ;;
+    *)           set -- balanced ;;
+  esac
+  for c in "$@"; do
+    if [[ $choices == *" $c "* ]]; then
+      printf '%s\n' "$c"
+      return 0
+    fi
+  done
+  return 1
+}
+
+handlers() {
+  local dir
+  for dir in "$SYSFS"/class/platform-profile/platform-profile-*; do
+    [[ -r $dir/name && -r $dir/choices ]] && printf '%s\n' "$dir"
+  done
+}
+
+apply() {
+  local prof=$1 dir want cur
+  case $prof in power-saver|balanced|performance) ;; *) return 0 ;; esac
+  while IFS= read -r dir; do
+    want=$(pick "$dir" "$prof") || continue
+    cur=$(<"$dir/profile")
+    [[ $cur == "$want" ]] && continue
+    if printf '%s\n' "$want" >"$dir/profile" 2>/dev/null; then
+      log "$prof: $(<"$dir/name") $cur -> $want"
+    else
+      log "$prof: could not set $(<"$dir/name") to $want"
+    fi
+  done < <(handlers)
+}
+
+active_profile() {
+  busctl get-property "$BUS" "$OBJ" "$BUS" ActiveProfile 2>/dev/null |
+    sed -n 's/^s "\(.*\)"$/\1/p'
+}
+
+status() {
+  local prof dir
+  prof=$(active_profile)
+  printf 'power-profiles-daemon: %s\n' "${prof:-unavailable}"
+  printf 'legacy platform_profile: %s\n' "$(cat "$SYSFS/firmware/acpi/platform_profile" 2>/dev/null || echo -)"
+  while IFS= read -r dir; do
+    printf '%s: %s (choices: %s; wants %s)\n' "$(<"$dir/name")" "$(<"$dir/profile")" \
+      "$(<"$dir/choices")" "$(pick "$dir" "${prof:-balanced}" || echo -)"
+  done < <(handlers)
+}
+
+case ${1:-} in
+  --status) status; exit 0 ;;
+  --apply)  apply "${2:?profile}"; exit 0 ;;
+  "")       ;;
+  *)        echo "usage: $0 [--status | --apply PROFILE]" >&2; exit 2 ;;
+esac
+
+apply "$(active_profile)"
+
+# One stream for both sources: profile changes from power-profiles-daemon and
+# logind's PrepareForSleep(false) after resume. If either monitor exits, the
+# service ends and systemd restarts it.
+{
+  gdbus monitor --system --dest "$BUS" --object-path "$OBJ" &
+  gdbus monitor --system --dest org.freedesktop.login1 --object-path /org/freedesktop/login1 &
+  wait -n
+  # shellcheck disable=SC2046 # one word per remaining monitor PID
+  kill $(jobs -p)
+} 2>/dev/null | while IFS= read -r line; do
+  case $line in
+    *"'ActiveProfile': <'"*)
+      prof=${line#*"'ActiveProfile': <'"}
+      apply "${prof%%\'*}"
+      ;;
+    *"PrepareForSleep (false"*)
+      apply "$(active_profile)"
+      ;;
+  esac
+done
