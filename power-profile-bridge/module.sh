@@ -42,10 +42,15 @@ _ppb_dropin=/etc/systemd/system/power-profiles-daemon.service.d/50-asus-expertbo
 _ppb_bus=org.freedesktop.UPower.PowerProfiles
 _ppb_obj=/org/freedesktop/UPower/PowerProfiles
 
-# The daemon's effective command line, as systemd would run it now.
+# The daemon's effective command line and executable, as systemd shows them.
+_ppb_ppd_exec() {
+  systemctl show -P ExecStart power-profiles-daemon.service 2>/dev/null | head -n1
+}
 _ppb_ppd_argv() {
-  systemctl show -P ExecStart power-profiles-daemon.service 2>/dev/null |
-    sed -n 's/^{ path=[^;]* ; argv\[\]=\([^;]*\) ;.*/\1/p' | head -n1
+  _ppb_ppd_exec | sed -n 's/^{ path=[^;]* ; argv\[\]=\([^;]*\) ;.*/\1/p'
+}
+_ppb_ppd_path() {
+  _ppb_ppd_exec | sed -n 's/^{ path=\([^ ;]*\) ;.*/\1/p'
 }
 
 # True when that command line blocks the daemon's platform driver.
@@ -86,22 +91,25 @@ _ppb_restart_ppd() {
   fi
 }
 
-# Start the daemon with --block-driver=platform_profile, keeping every other
-# argument its effective command line already has.
+# Start the daemon with --block-driver=platform_profile. Only the packaged
+# command line (the executable alone) is rewritten; a custom ExecStart from
+# another override is left to its owner rather than re-serialised from
+# systemctl's display form, which does not keep argument boundaries.
 _ppb_install_dropin() {
-  local argv w content
-  local -a words=() keep=()
+  local path argv content
+  path="$(_ppb_ppd_path)"
   argv="$(_ppb_ppd_argv)"
-  [[ -n $argv ]] || die "[power-profile-bridge] cannot read ExecStart of power-profiles-daemon.service"
-  read -ra words <<<"$argv"
-  if ! "${words[0]}" --help-all 2>/dev/null | grep -q -- --block-driver; then
-    warn "[power-profile-bridge] ${words[0]} has no --block-driver option: switching from performance"
+  [[ $path =~ ^/[A-Za-z0-9._/+-]+$ && -x $path ]] ||
+    die "[power-profile-bridge] cannot read the executable of power-profiles-daemon.service"
+  if ! "$path" --help-all 2>/dev/null | grep -q -- --block-driver; then
+    warn "[power-profile-bridge] $path has no --block-driver option: switching from performance"
     warn "[power-profile-bridge] straight to power-saver will still fall back to balanced"
     return 0
   fi
-  for w in "${words[@]}"; do
-    [[ $w == --block-driver=platform_profile ]] || keep+=("$w")
-  done
+  case $argv in
+    "$path"|"$path --block-driver=platform_profile") ;;
+    *) die "[power-profile-bridge] power-profiles-daemon already runs a custom command line ($argv); add --block-driver=platform_profile to that override instead" ;;
+  esac
   content="# Installed by asus-expertbook-linux (power-profile-bridge).
 # power-profile-bridge writes every platform-profile handler itself. The
 # daemon's platform_profile driver would emulate power-saver by writing
@@ -109,7 +117,7 @@ _ppb_install_dropin() {
 # its CPU (EPP) driver stays on.
 [Service]
 ExecStart=
-ExecStart=${keep[*]} --block-driver=platform_profile"
+ExecStart=$path --block-driver=platform_profile"
   if [[ ! -f $_ppb_dropin || "$(cat "$_ppb_dropin")" != "$content" ]]; then
     install -d -m 0755 "${_ppb_dropin%/*}" || die "[power-profile-bridge] cannot create ${_ppb_dropin%/*}"
     printf '%s\n' "$content" >"$_ppb_dropin" || die "[power-profile-bridge] cannot write $_ppb_dropin"
@@ -150,8 +158,12 @@ module_post_install() {
 
   _ppb_install_dropin
   systemctl daemon-reload
-  systemctl enable power-profile-bridge.service
-  systemctl restart power-profile-bridge.service
+  # reenable: WantedBy is power-profiles-daemon.service, so the bridge starts
+  # whenever the daemon does, including on D-Bus activation.
+  systemctl reenable power-profile-bridge.service ||
+    die "[power-profile-bridge] could not enable power-profile-bridge.service"
+  systemctl restart power-profile-bridge.service ||
+    die "[power-profile-bridge] power-profile-bridge.service did not start"
 
   echo
   echo "Done. Switch profiles in the KDE battery applet and check with:"

@@ -1,18 +1,18 @@
 [Unit]
 Description=Apply the power profile to every platform-profile handler
 Documentation=https://github.com/burakgon/asus-expertbook-linux
-# Ordered after the daemon but never pulls it in: its unit conflicts with TLP
-# and tuned. The bridge exits quietly when the daemon is not running.
+# Runs exactly while the daemon runs: enabling adds the bridge to the daemon's
+# .wants, so it starts whenever the daemon does (at boot or on D-Bus
+# activation, which is how KDE usually starts it), and PartOf= stops or
+# restarts it with the daemon. It never pulls the daemon in: that unit
+# conflicts with TLP and tuned.
 After=power-profiles-daemon.service
+PartOf=power-profiles-daemon.service
 ConditionPathExistsGlob=/sys/class/platform-profile/platform-profile-*
 
 [Service]
 Type=simple
 ExecStart=/usr/local/bin/power-profile-bridge
-# Leave the handlers agreeing again, so the legacy platform_profile stops
-# reading "custom" once the bridge is gone.
-# ($$ is a literal $ in unit files.)
-ExecStopPost=/bin/sh -c 'f=/sys/firmware/acpi/platform_profile; [ "$$(cat $$f 2>/dev/null)" = custom ] && echo balanced >$$f || true'
 Restart=on-failure
 RestartSec=5
 
@@ -36,4 +36,4 @@ CapabilityBoundingSet=
 IPAddressDeny=any
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=power-profiles-daemon.service

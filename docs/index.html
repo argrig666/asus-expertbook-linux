@@ -1291,9 +1291,10 @@ balanced performance</code></pre>
           starts it with <code>--block-driver=platform_profile</code>, so the
           bridge alone writes platform profiles and nothing snaps back. The
           module restores your profile after restarting the daemon. The bridge
-          sets every profile and re-applies after resume and whenever the
-          daemon (re)appears on the bus; stopping it puts both handlers back
-          on <code>balanced</code> if they were left disagreeing. A single
+          runs as part of the daemon (it starts with it, including on D-Bus
+          activation, which is how KDE usually starts it), sets every profile
+          and re-applies after resume, whenever the daemon (re)appears on the
+          bus, and once a minute. A single
           handler can be overridden in <code>/etc/power-profile-bridge.conf</code>
           (for example <code>power-saver.asus-wmi=balanced</code>).
         </p>

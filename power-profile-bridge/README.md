@@ -60,15 +60,20 @@ platform profiles and nothing snaps back. `powerprofilesctl list` then shows
 the first time its drivers change, so the module puts your current profile
 back after restarting it.
 
-The bridge sets every profile, not only power-saver, and re-applies after
-resume, whenever power-profiles-daemon (re)appears on the bus, and once a
-minute, which also puts back a handler someone changed by hand. Stopping the
-service puts both handlers back on `balanced` if they were left disagreeing.
-The drop-in keeps any other arguments the daemon's command line already had;
-if a later drop-in overrides `ExecStart`, install stops instead of claiming
-the driver is off. With a power-profiles-daemon too old for `--block-driver`,
-the module warns and installs the bridge alone: power-saver then works when
-reached from balanced, not straight from performance.
+The service is enabled as part of power-profiles-daemon
+(`WantedBy=power-profiles-daemon.service`, `PartOf=`): it starts whenever the
+daemon starts, at boot or through D-Bus activation (which is how KDE usually
+starts it), and stops or restarts with it. The bridge sets every profile, not
+only power-saver, and re-applies after resume, whenever the daemon (re)appears
+on the bus, and once a minute, which also puts back a handler someone changed
+by hand.
+
+The drop-in only replaces the packaged command line (the executable alone). If
+another override already gives the daemon its own `ExecStart`, install stops
+and asks you to add `--block-driver=platform_profile` there; it also stops if
+a later drop-in would override ours. With a power-profiles-daemon too old for
+`--block-driver`, the module warns and installs the bridge alone: power-saver
+then works when reached from balanced, not straight from performance.
 
 The mapping is generic: for each handler, power-saver picks `low-power`, then
 `quiet`, `cool`, `balanced`; performance picks `performance`, then
@@ -110,8 +115,10 @@ your current profile. `/etc/power-profile-bridge.conf` is left in place.
 - Needs power-profiles-daemon (KDE's default), running. Install refuses while
   TLP, tuned, tuned-ppd, auto-cpufreq or system76-power is active, since the
   daemon's unit conflicts with them. The service never starts the daemon
-  itself (no `Wants=`, no D-Bus auto-start) and exits quietly when it is not
-  running, so switching to TLP later is safe; uninstall the module then.
+  itself: the daemon starts the service, not the other way round, its D-Bus
+  reads never auto-start anything, and it exits quietly if started while the
+  daemon is not running. Switching to TLP later is safe; uninstall the module
+  then.
 - Hotkeys or tools that change the platform profile behind the daemon's back
   are no longer reflected in the KDE applet, because the daemon's platform
   driver is off.
