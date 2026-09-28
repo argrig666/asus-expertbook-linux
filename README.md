@@ -285,7 +285,7 @@ longer forces `LLVM=1` on GCC-built kernels.
 | `cs35l56+cs42l43-spk.conf`, `cs42l43-spk+cs35l56.conf` | `/usr/share/alsa/ucm2/sof-soundwire/` | The Speaker device for the combined codec — routes playback to `hw:,2` and the CS35L56 + CS42L43 amps. |
 | `cs42l43-spk+cs35l56-init.conf` | `/usr/share/alsa/ucm2/codecs/cs42l43-spk+cs35l56/` | Combined codec init (control remap + LED attach). `module.sh` symlinks `cs35l56+cs42l43-spk` → this so both kernel names resolve. |
 | `52-disable-bt-sco-offload.conf` | `/etc/wireplumber/wireplumber.conf.d/` | Disables the dead `SSP2-BT` offload PCM so its probe stops spamming the log on pre-7.1 kernels (inert on 7.1+, where the PCM no longer exists). Bluetooth audio (A2DP/HFP) still works via the PipeWire software path. |
-| `dkms/asus-expertbook-sof-sdw-3.0.2/` | `/usr/src/` + `/lib/modules/*/updates/dkms/` | Compatibility overlay for released kernels lacking upstream commit `90af3209742d`; not built where the in-kernel DMI quirk is detected, and DKMS never builds it for 7.3+. Upgrades compile the new overlay for every kernel before the old one is removed. |
+| `dkms/asus-expertbook-sof-sdw-3.0.2/` | `/usr/src/` + `/lib/modules/*/updates/dkms/` | Compatibility overlay for released kernels lacking upstream commit `90af3209742d`; not built where the in-kernel DMI quirk is detected, and DKMS never builds it for 7.3+. Upgrades compile the new overlay for every kernel first and take the old one off a kernel only once its replacement exists. |
 
 > The **F1 speaker-mute LED** needs `asus-wmi`'s `platform::mute` (WMI device
 > `0x0004001C`), which lands in Linux 7.4. Until then only `platform::micmute`

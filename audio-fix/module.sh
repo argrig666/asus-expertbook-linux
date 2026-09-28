@@ -304,6 +304,25 @@ AUDIO_DKMS_LEGACY=(
   "asus-expertbook-sof-sdw/3.0.1"
 )
 
+# State of DKMS module $1 (name/version) on kernel $2: "installed", "built"
+# or nothing.
+audio_dkms_state_of() {
+  local out
+  out="$(dkms status -m "${1%/*}" -v "${1#*/}" -k "$2" 2>/dev/null || true)"
+  case $out in
+    *", $2, "*": installed"*) echo installed ;;
+    *", $2, "*": built"*)     echo built ;;
+  esac
+}
+
+audio_dkms_state() {
+  audio_dkms_state_of "$AUDIO_DKMS_NAME/$AUDIO_DKMS_VERSION" "$1"
+}
+
+AUDIO_RETIRED=()
+
+# Unregister every superseded overlay and delete its source. A DKMS failure
+# stops here and keeps the source, so the registration stays repairable.
 # Succeeds when something was removed.
 audio_remove_legacy_dkms() {
   local legacy name version source removed=1
@@ -315,42 +334,45 @@ audio_remove_legacy_dkms() {
     if command -v dkms >/dev/null 2>&1 &&
        [[ -n $(dkms status -m "$name" -v "$version" 2>/dev/null || true) ]]; then
       log "[audio-fix] removing superseded DKMS module $legacy"
-      dkms remove -m "$name" -v "$version" --all || \
-        warn "[audio-fix] DKMS could not completely remove $legacy"
+      dkms remove -m "$name" -v "$version" --all ||
+        die "[audio-fix] DKMS could not remove $legacy; its source in $source is kept"
       removed=0
     fi
     if [[ -e $source ]]; then
-      if rm -rf -- "$source"; then
-        removed=0
-      else
-        warn "[audio-fix] could not remove $source"
-      fi
+      rm -rf -- "$source" || die "[audio-fix] could not remove $source"
+      removed=0
     fi
   done
   return "$removed"
 }
 
-# True while a superseded overlay is still installed for some kernel, that is,
-# still what gives that kernel working speakers.
-audio_legacy_dkms_active() {
+# Take every superseded overlay off kernel $1, listing what went in
+# AUDIO_RETIRED so a failed swap can put it back.
+audio_retire_legacy_on() {
   local legacy
-  command -v dkms >/dev/null 2>&1 || return 1
+  AUDIO_RETIRED=()
   for legacy in "${AUDIO_DKMS_LEGACY[@]}"; do
-    if dkms status -m "${legacy%/*}" -v "${legacy#*/}" 2>/dev/null | grep -q ': installed'; then
-      return 0
-    fi
+    [[ -n $(audio_dkms_state_of "$legacy" "$1") ]] || continue
+    log "[audio-fix] taking $legacy off $1"
+    dkms remove -m "${legacy%/*}" -v "${legacy#*/}" -k "$1" ||
+      die "[audio-fix] DKMS could not remove $legacy from $1"
+    AUDIO_RETIRED+=("$legacy")
   done
-  return 1
 }
 
-# "installed", "built" or nothing, for the current overlay on kernel $1.
-audio_dkms_state() {
-  local out
-  out="$(dkms status -m "$AUDIO_DKMS_NAME" -v "$AUDIO_DKMS_VERSION" -k "$1" 2>/dev/null || true)"
-  case $out in
-    *": installed"*) echo installed ;;
-    *": built"*)     echo built ;;
-  esac
+# Put back what audio_retire_legacy_on took off kernel $1. Removing a
+# version's last build unregisters it, so it is added again from its source.
+audio_restore_legacy_on() {
+  local legacy
+  for legacy in "${AUDIO_RETIRED[@]}"; do
+    [[ -n $(dkms status -m "${legacy%/*}" -v "${legacy#*/}" 2>/dev/null || true) ]] ||
+      dkms add -m "${legacy%/*}" -v "${legacy#*/}" || true
+    if dkms install -m "${legacy%/*}" -v "${legacy#*/}" -k "$1"; then
+      log "[audio-fix] put $legacy back on $1"
+    else
+      warn "[audio-fix] could not put $legacy back on $1"
+    fi
+  done
 }
 
 audio_require_build_tools() {
@@ -381,8 +403,8 @@ audio_require_build_tools() {
 }
 
 audio_install_dkms() {
-  local kernel kernel_dir needed=0 changed=0 keep=0 rc
-  local -a build_kernels=() uncovered=() built=() failed=()
+  local kernel kernel_dir legacy needed=0 changed=0 keep=0 rc
+  local -a build_kernels=() uncovered=() built=() failed=() held=()
 
   [[ -f $AUDIO_DKMS_SOURCE/dkms.conf ]] || \
     die "[audio-fix] bundled DKMS source is missing: $AUDIO_DKMS_SOURCE"
@@ -395,19 +417,18 @@ audio_install_dkms() {
   fi
 
   # Re-running install with the same, unchanged overlay keeps every working
-  # build and only builds kernels that lack one.
+  # build and only builds kernels that lack one. The same version with other
+  # source would have to replace working builds in place, so overlay changes
+  # get a new version instead.
   if command -v dkms >/dev/null 2>&1 && \
      [[ -n $(dkms status -m "$AUDIO_DKMS_NAME" -v "$AUDIO_DKMS_VERSION" \
        2>/dev/null || true) ]]; then
-    if diff -rq "$AUDIO_DKMS_SOURCE" "$AUDIO_DKMS_TARGET" >/dev/null 2>&1; then
-      keep=1
-    else
-      # Only a source change without a version bump lands here. It cannot be
-      # built beside the registered copy, so it is rebuilt in place.
-      warn "[audio-fix] the $AUDIO_DKMS_VERSION overlay source changed; rebuilding it in place"
-      dkms remove -m "$AUDIO_DKMS_NAME" -v "$AUDIO_DKMS_VERSION" --all ||
-        die "[audio-fix] could not remove the changed $AUDIO_DKMS_VERSION registration"
-      changed=1
+    diff -rq "$AUDIO_DKMS_SOURCE" "$AUDIO_DKMS_TARGET" >/dev/null 2>&1 ||
+      die "[audio-fix] the registered $AUDIO_DKMS_NAME $AUDIO_DKMS_VERSION differs from this checkout; to rebuild it anyway: dkms remove -m $AUDIO_DKMS_NAME -v $AUDIO_DKMS_VERSION --all"
+    keep=1
+    # Older installs copied the checkout owner along; root compiles this.
+    if ! chown -R root:root -- "$AUDIO_DKMS_TARGET" || ! chmod -R go-w -- "$AUDIO_DKMS_TARGET"; then
+      die "[audio-fix] cannot give $AUDIO_DKMS_TARGET to root"
     fi
   fi
   (( keep )) || rm -rf -- "$AUDIO_DKMS_TARGET"
@@ -436,13 +457,18 @@ audio_install_dkms() {
     build_kernels+=("$kernel")
   done
 
+  # Removing the last build of a version unregisters it.
+  if (( keep )) && [[ -z $(dkms status -m "$AUDIO_DKMS_NAME" -v "$AUDIO_DKMS_VERSION" 2>/dev/null || true) ]]; then
+    keep=0
+  fi
+
   if (( needed == 0 )); then
-    if (( keep )); then
+    if [[ -n $(dkms status -m "$AUDIO_DKMS_NAME" -v "$AUDIO_DKMS_VERSION" 2>/dev/null || true) ]]; then
       dkms remove -m "$AUDIO_DKMS_NAME" -v "$AUDIO_DKMS_VERSION" --all ||
         die "[audio-fix] could not remove the redundant DKMS overlay"
-      rm -rf -- "$AUDIO_DKMS_TARGET"
       changed=1
     fi
+    rm -rf -- "$AUDIO_DKMS_TARGET"
     if audio_remove_legacy_dkms; then
       changed=1
     fi
@@ -458,15 +484,18 @@ audio_install_dkms() {
 
   audio_require_build_tools
   if (( ! keep )); then
+    # Root compiles this source into a kernel module, so it must not keep the
+    # checkout owner's ownership (cp -a would): root:root, not user-writable.
     if ! install -d -m 0755 "$AUDIO_DKMS_TARGET" ||
-       ! cp -a -- "$AUDIO_DKMS_SOURCE/." "$AUDIO_DKMS_TARGET/" ||
+       ! cp -R -- "$AUDIO_DKMS_SOURCE/." "$AUDIO_DKMS_TARGET/" ||
+       ! chown -R root:root -- "$AUDIO_DKMS_TARGET" ||
+       ! chmod -R go-w -- "$AUDIO_DKMS_TARGET" ||
        ! dkms add -m "$AUDIO_DKMS_NAME" -v "$AUDIO_DKMS_VERSION"; then
       die "[audio-fix] could not register the $AUDIO_DKMS_VERSION overlay with DKMS"
     fi
   fi
 
-  # Compile first. Nothing installed changes until the new builds exist, so a
-  # compile failure cannot take working speakers away from a kernel.
+  # Compile first: nothing installed changes while builds can still fail.
   for kernel in "${build_kernels[@]}"; do
     case $(audio_dkms_state "$kernel") in
       installed)
@@ -491,37 +520,47 @@ audio_install_dkms() {
     fi
   done
 
-  # An older overlay still carrying some kernel is kept whole rather than
-  # traded for a partial set.
-  if (( ${#failed[@]} > 0 )) && audio_legacy_dkms_active; then
-    if (( ! keep )); then
-      dkms remove -m "$AUDIO_DKMS_NAME" -v "$AUDIO_DKMS_VERSION" --all || true
-      rm -rf -- "$AUDIO_DKMS_TARGET"
-    fi
-    die "[audio-fix] overlay $AUDIO_DKMS_VERSION did not build for: ${failed[*]}; the previous overlay stays installed (make.log under /var/lib/dkms/$AUDIO_DKMS_NAME)"
-  fi
-
-  # Swap: retire the superseded overlays, then install the new builds.
-  if audio_remove_legacy_dkms; then
-    changed=1
-  fi
+  # Swap kernel by kernel: take the older overlays off a kernel only once its
+  # new build exists, and put them back if installing that build fails.
+  # Kernels without a new build keep whatever they run now.
   for kernel in "${built[@]}"; do
+    audio_retire_legacy_on "$kernel"
+    (( ${#AUDIO_RETIRED[@]} == 0 )) || changed=1
     log "[audio-fix] installing DKMS overlay $AUDIO_DKMS_VERSION for $kernel"
     if dkms install -m "$AUDIO_DKMS_NAME" -v "$AUDIO_DKMS_VERSION" -k "$kernel"; then
       changed=1
     else
       warn "[audio-fix] the DKMS overlay failed to install for $kernel"
       failed+=("$kernel")
+      audio_restore_legacy_on "$kernel"
     fi
   done
+
+  # Kernels still running an older overlay because they got no new one.
+  for kernel in "${failed[@]}" "${uncovered[@]}"; do
+    for legacy in "${AUDIO_DKMS_LEGACY[@]}"; do
+      if [[ $(audio_dkms_state_of "$legacy" "$kernel") == installed ]]; then
+        held+=("$kernel ($legacy)")
+        break
+      fi
+    done
+  done
+
+  # Superseded overlays go only when no kernel still depends on them.
+  if (( ${#held[@]} == 0 )) && audio_remove_legacy_dkms; then
+    changed=1
+  fi
 
   if (( changed )); then
     audio_refresh_initramfs "with the DKMS overlay"
   fi
+  if (( ${#held[@]} > 0 )); then
+    warn "[audio-fix] kept the older overlay for: ${held[*]}"
+  fi
   (( ${#failed[@]} == 0 )) || \
-    die "[audio-fix] no ghost-RT722 overlay for: ${failed[*]} (see 'dkms status' and the make.log under /var/lib/dkms/$AUDIO_DKMS_NAME)"
+    die "[audio-fix] no new ghost-RT722 overlay for: ${failed[*]} (see 'dkms status' and the make.log under /var/lib/dkms/$AUDIO_DKMS_NAME)"
   if (( ${#uncovered[@]} > 0 )); then
-    warn "[audio-fix] no overlay for: ${uncovered[*]}; the speakers will not work when booting it"
+    warn "[audio-fix] no overlay for: ${uncovered[*]}; its speakers need the older overlay or headers to build this one"
   fi
   return 0
 }

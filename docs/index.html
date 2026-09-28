@@ -1006,7 +1006,8 @@ cs35l56 sdw:0:2:01fa:3556:01:0: Tuning PID: 0x23134, SID: 0x470200, TID: 0x84b06
           trusting the version. Overlay 3.0.2 also limits DKMS to 6.x–7.2
           kernels, so a 7.3+ kernel update keeps the kernel's own, newer
           <code>sof_sdw</code>; an overlay upgrade compiles for every kernel
-          before the old overlay is removed.
+          first and takes the old overlay off a kernel only once its
+          replacement exists.
         </p>
         <p><strong>Files installed (v3.2.0):</strong></p>
         <ul>
