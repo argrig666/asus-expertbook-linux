@@ -931,10 +931,14 @@ Actions
 sudo touchpad-haptics set --click-force medium --intensity 60 --save
 touchpad-haptics status</code></pre>
         <p>
-          Force levels feel similar, so check intensity first:
-          <code>touchpad-haptics set --click-force light --intensity 0</code>
-          should make a click feel almost dead, with no vibration, which proves
-          both reports reach the pad. If <code>set</code> cannot open the
+          The firmware cannot report its values back, so test the two reports
+          separately. <code>touchpad-haptics set --intensity 0</code> should
+          take the vibration out of a click, which proves report 9 (intensity)
+          reaches the pad and nothing about report 8. For click force, keep a
+          clear intensity and compare <code>--click-force light</code> with
+          <code>--click-force firm</code>, pressing slowly: with
+          <code>firm</code> a press that clicked under <code>light</code>
+          should need noticeably more force. If <code>set</code> cannot open the
           device, log out and back in once. The report layout was first worked
           out in
           <a href="https://github.com/bramvera/omarchy-asus-expertbook-haptic-touchpad">bramvera/omarchy-asus-expertbook-haptic-touchpad</a>;

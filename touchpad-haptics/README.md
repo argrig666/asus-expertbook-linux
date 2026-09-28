@@ -42,14 +42,29 @@ it cannot open the device, log out and back in once.
 
 ### Check that it reaches the firmware
 
-Force levels feel similar, so test intensity first:
+The firmware cannot report its values back, so test the two reports one at a
+time. Neither command below saves anything.
+
+Intensity (report 9) is easy to feel:
 
 ```sh
-touchpad-haptics set --click-force light --intensity 0
+touchpad-haptics set --intensity 0      # clicks lose their vibration
+touchpad-haptics set --intensity 100    # strong clicks
 ```
 
-A click should now feel almost dead, with no vibration. That proves both
-reports reach the pad. Then pick real values and save them.
+That proves report 9 reaches the pad, and nothing about report 8. The click
+force levels are close together, so compare the two ends with a clear
+intensity, pressing slowly with one finger:
+
+```sh
+touchpad-haptics set --intensity 60 --click-force light
+touchpad-haptics set --click-force firm
+```
+
+With `firm`, a press that clicked under `light` should need noticeably more
+force before it clicks. If the two feel the same, report 8 is not taking
+effect; please open an issue. Then pick real values and save them with
+`--save`.
 
 ## Uninstall
 

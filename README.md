@@ -351,8 +351,8 @@ BT.2020/PQ signaling once Panel Replay stops the stream on a static desktop.
 Dropping only Early Transport keeps the washed out colors and slows cursor
 motion to ~20 fps, so Panel Replay itself is at fault.
 
-Disabling Panel Replay alone (`xe.enable_panel_replay=0`, or the
-[`upstream-patches/0001`](upstream-patches/) quirk) is worse: `xe` falls back
+Disabling Panel Replay alone (`xe.enable_panel_replay=0`, or the first
+version of the [`upstream-patches/0001`](upstream-patches/) quirk) is worse: `xe` falls back
 to PSR2 selective update over the panel's DSC link, and every screen update
 paints red/green speckle garbage, goes black, then parks on garbage or the
 correct image at random. The most plausible cause is that the driver gates
