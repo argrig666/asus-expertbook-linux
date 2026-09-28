@@ -197,7 +197,7 @@ ish_reload_driver() {
 # Pin the ISH PCI function to power/control=on (see the header).
 ish_install_keep_on_rule() {
   if ! cmp -s "$MODULE_DIR/${ISH_KEEP_ON_RULE##*/}" "$ISH_KEEP_ON_RULE"; then
-    install -D -m 0644 "$MODULE_DIR/${ISH_KEEP_ON_RULE##*/}" "$ISH_KEEP_ON_RULE"
+    install -D -m 0644 "$MODULE_DIR/${ISH_KEEP_ON_RULE##*/}" "$ISH_KEEP_ON_RULE" || return 1
     log "[ish-firmware] installed $ISH_KEEP_ON_RULE"
   fi
   if [[ -w $ISH_PCI_DEV/power/control ]]; then
@@ -211,8 +211,19 @@ ish_install_keep_on_rule() {
 ish_remove_legacy_copy() {
   local legacy="$ISH_FW_LEGACY_DIR/$ISH_FW_LEGACY_NAME"
   ish_file_verified "$legacy" || return 1
-  rm -f -- "$legacy"
+  if command -v pacman >/dev/null 2>&1 && pacman -Qqo "$legacy" >/dev/null 2>&1; then
+    warn "[ish-firmware] $legacy belongs to a package; leaving it"
+    return 1
+  fi
+  rm -f -- "$legacy" || return 1
   log "[ish-firmware] removed the earlier copy at $legacy"
+}
+
+# True when the installed state needs install/update to run again: an image
+# from the first revision of this module, or a missing keep-on rule.
+ish_needs_migration() {
+  ish_file_verified "$ISH_FW_LEGACY_DIR/$ISH_FW_LEGACY_NAME" && return 0
+  ! cmp -s "$MODULE_DIR/${ISH_KEEP_ON_RULE##*/}" "$ISH_KEEP_ON_RULE"
 }
 
 # A hand-placed intel/ish/ish_ptl.bin that no package owns: the manual
@@ -234,11 +245,13 @@ module_install_state() {
   fi
   path="$(ish_fw_path)"
   if [[ -f $path ]]; then
-    if ish_file_verified "$path"; then
+    if ish_file_verified "$path" && ! ish_needs_migration; then
       echo up-to-date
     else
       echo update-available
     fi
+  elif ish_file_verified "$ISH_FW_LEGACY_DIR/$ISH_FW_LEGACY_NAME"; then
+    echo update-available
   else
     echo not-installed
   fi
@@ -261,8 +274,9 @@ module_install() {
     ok "[ish-firmware] verified image already present: $path"
   else
     ish_require_tools
-    tmp="$(mktemp -d -t asus-ish-fw.XXXXXXXX)"
-    trap '[[ -n ${tmp:-} ]] && rm -rf -- "$tmp"' EXIT
+    tmp="$(mktemp -d -t asus-ish-fw.XXXXXXXX)" || die "[ish-firmware] mktemp failed"
+    # shellcheck disable=SC2064 # expand now: $tmp is local to this function
+    trap "rm -rf -- $(printf '%q' "$tmp")" EXIT
 
     package="$(ish_find_local_package || true)"
     if [[ -n $package ]]; then
@@ -279,7 +293,7 @@ module_install() {
       package="$tmp/$ISH_PACKAGE_NAME"
       log "[ish-firmware] downloading the fixed ASUS Intel Sensor Hub V5.8.62.0 package (5 MB, no version lookup)"
       curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
-        --output "$package" "$ISH_PACKAGE_URL"
+        --output "$package" "$ISH_PACKAGE_URL" || die "[ish-firmware] download failed"
       package_hash="$(sha256sum "$package" | awk '{print $1}')"
       [[ $package_hash == "$ISH_PACKAGE_SHA256" ]] || \
         die "[ish-firmware] downloaded package SHA-256 mismatch; refusing to install"
@@ -287,9 +301,10 @@ module_install() {
 
     archive="$tmp/ish-payload.7z"
     dd if="$package" of="$archive" iflag=skip_bytes,count_bytes \
-      skip="$ISH_PAYLOAD_OFFSET" count="$ISH_PAYLOAD_SIZE" status=none
-    install -d -m 0700 "$tmp/extracted"
-    7z x -y "-o$tmp/extracted" "$archive" >/dev/null
+      skip="$ISH_PAYLOAD_OFFSET" count="$ISH_PAYLOAD_SIZE" status=none ||
+      die "[ish-firmware] could not carve the payload"
+    install -d -m 0700 "$tmp/extracted" || die "[ish-firmware] cannot create $tmp/extracted"
+    7z x -y "-o$tmp/extracted" "$archive" >/dev/null || die "[ish-firmware] could not extract the payload"
 
     image="$(find "$tmp/extracted" -type f -name "$ISH_FW_IMAGE_NAME" -print -quit)"
     [[ -n $image ]] || die "[ish-firmware] verified package did not contain $ISH_FW_IMAGE_NAME"
@@ -298,15 +313,18 @@ module_install() {
       die "[ish-firmware] firmware image SHA-256 mismatch; refusing to install"
 
     log "[ish-firmware] installing -> $path"
-    install -D -m 0644 "$image" "$path"
+    install -D -m 0644 "$image" "$path" || die "[ish-firmware] cannot install $path"
     if [[ ${path##*/} != "$ISH_FW_FALLBACK_NAME" ]]; then
-      install -D -m 0644 "$image" "$ISH_FW_DIR/$ISH_FW_FALLBACK_NAME"
+      install -D -m 0644 "$image" "$ISH_FW_DIR/$ISH_FW_FALLBACK_NAME" ||
+        die "[ish-firmware] cannot install $ISH_FW_DIR/$ISH_FW_FALLBACK_NAME"
     fi
     changed=1
   fi
 
+  # Only touch the earlier copy once the new one is in place and verified.
+  ish_file_verified "$path" || die "[ish-firmware] $path did not verify after install"
   ish_remove_legacy_copy && changed=1
-  ish_install_keep_on_rule
+  ish_install_keep_on_rule || die "[ish-firmware] cannot install $ISH_KEEP_ON_RULE"
 
   # A running ISH keeps the image it booted with, so a new or moved file only
   # takes effect after the driver uploads it again.
@@ -338,6 +356,7 @@ module_post_uninstall() {
   local path
   path="$(ish_fw_path)"
   rm -f -- "$path" "$ISH_FW_DIR/$ISH_FW_FALLBACK_NAME" "$ISH_KEEP_ON_RULE"
+  ish_remove_legacy_copy || true
   echo "Removed the ASUS ISH image. Reboot (or reload intel_ish_ipc) to return to the"
   echo "generic linux-firmware image, which this board rejects; the 'als' device will disappear."
 }
