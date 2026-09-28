@@ -15,4 +15,5 @@ Linux 7.2.8 backported the 7.3 `asoc_sdw_parse_sdw_endpoints(dev, ctx, ...)`
 signature, and the 3.0.0 overlay stopped building there. The `Makefile` now
 probes the target kernel's `include/sound/soc_sdw_utils.h` for that signature
 instead of trusting the version number. `LLVM=1` is left to DKMS, which adds it
-only for Clang-built kernels.
+only for Clang-built kernels. `BUILD_EXCLUSIVE_KERNEL` keeps DKMS to 6.x–7.2:
+Linux 7.3 has the quirk itself and a newer `sof_sdw` than this copy.

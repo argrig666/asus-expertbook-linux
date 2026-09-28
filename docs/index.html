@@ -1003,11 +1003,14 @@ cs35l56 sdw:0:2:01fa:3556:01:0: Tuning PID: 0x23134, SID: 0x470200, TID: 0x84b06
           3.0.0 failed that way on 7.2.y kernels whose stable update backported
           the 7.3 <code>asoc_sdw_parse_sdw_endpoints(dev, ctx, ...)</code>
           signature; overlay 3.0.1 probes the kernel headers for it instead of
-          trusting the version.
+          trusting the version. Overlay 3.0.2 also limits DKMS to 6.x–7.2
+          kernels, so a 7.3+ kernel update keeps the kernel's own, newer
+          <code>sof_sdw</code>; an overlay upgrade compiles for every kernel
+          before the old overlay is removed.
         </p>
         <p><strong>Files installed (v3.2.0):</strong></p>
         <ul>
-          <li><code>/usr/src/asus-expertbook-sof-sdw-3.0.1/</code> and <code>/lib/modules/*/updates/dkms/</code> — board-scoped compatibility filter, built only for kernels lacking upstream commit <code>90af3209742d</code>; install also regenerates initramfs images</li>
+          <li><code>/usr/src/asus-expertbook-sof-sdw-3.0.2/</code> and <code>/lib/modules/*/updates/dkms/</code> — board-scoped compatibility filter, built only for kernels lacking upstream commit <code>90af3209742d</code> (never by DKMS for 7.3+); install also regenerates initramfs images</li>
           <li><code>/etc/wireplumber/wireplumber.conf.d/52-disable-bt-sco-offload.conf</code> — disables the dead SSP2-BT offload PCM so its probe stops spamming the log on pre-7.1 kernels (inert on 7.1+, where the PCM no longer exists); Bluetooth audio still works through PipeWire</li>
           <li><em>Only on <code>linux-firmware-cirrus &lt; 20260519</code> (newer packages ship identical files, and the bundled copies are removed there):</em> <code>/lib/firmware/cirrus/cs35l56-b0-dsp1-misc-104315e4-l2u{0,1}.bin</code> per-OEM tuning blobs and the matching <code>.wmfw</code> files, the generic CS35L56 Rev 3.13.4 firmware patch (chip ROM upgrades 3.4.4 → 3.13.4)</li>
           <li><em>HiFi UCM — only on <code>alsa-ucm-conf &lt; 1.2.16</code> (1.2.16+ ships it in the package):</em> <code>sof-soundwire.conf</code> (fixed <code>-spk</code> regex), the <code>cs35l56+cs42l43-spk</code> / <code>cs42l43-spk+cs35l56</code> speaker confs, and <code>codecs/cs42l43-spk+cs35l56/init.conf</code></li>

@@ -67,7 +67,7 @@ overlay only where needed, and removes it once every kernel contains the quirk.
 | `cs35l56-…-l2u0.bin` / `.wmfw` | `/lib/firmware/cirrus/` | Per-OEM tuning + ROM `3.4.4`→`3.13.4` patch, left amp. **Only on `linux-firmware-cirrus < 20260519`** (see below). |
 | `cs35l56-…-l2u1.bin` / `.wmfw` | `/lib/firmware/cirrus/` | Same, right amp. |
 | `52-disable-bt-sco-offload.conf` | `/etc/wireplumber/wireplumber.conf.d/` | Disables the dead `SSP2-BT` offload PCM so its probe stops spamming the log (pre-7.1 kernels; inert on 7.1+). A2DP/HFP Bluetooth still works via the PipeWire software path. |
-| `dkms/asus-expertbook-sof-sdw-3.0.1/` | `/usr/src/asus-expertbook-sof-sdw-3.0.1/` + `/lib/modules/*/updates/dkms/` | Board-scoped compatibility filter, built only for kernels lacking upstream commit `90af3209742d`; install also regenerates initramfs images. |
+| `dkms/asus-expertbook-sof-sdw-3.0.2/` | `/usr/src/asus-expertbook-sof-sdw-3.0.2/` + `/lib/modules/*/updates/dkms/` | Board-scoped compatibility filter, built only for kernels lacking upstream commit `90af3209742d` (and never by DKMS for 7.3+); install also regenerates initramfs images. |
 
 ### Installed only on `alsa-ucm-conf < 1.2.16` (otherwise the package provides them)
 
@@ -141,7 +141,15 @@ stock driver is back; the reason is in
 `/var/lib/dkms/asus-expertbook-sof-sdw/*/build/make.log`. This is what broke
 overlay 3.0.0 on Linux 7.2.8, whose stable update backported the 7.3
 `asoc_sdw_parse_sdw_endpoints(dev, ctx, ...)` signature; 3.0.1 detects that
-signature from the kernel headers.
+signature from the kernel headers. 3.0.2 adds a kernel range
+(`BUILD_EXCLUSIVE_KERNEL`, 6.x to 7.2): 3.0.1 let DKMS autoinstall build it for
+7.3+ kernels too, where it would replace the kernel's newer `sof_sdw` with this
+7.2-level copy although 7.3 has the quirk itself.
+
+Upgrading the overlay compiles the new version for every kernel before anything
+installed changes. If one kernel fails to build, the previous overlay stays in
+place for all of them and the install stops with the kernel's name. Kernels
+that contain the upstream quirk lose any overlay build left for them.
 
 The permanent fix was accepted as upstream commit
 [`90af3209742d`](https://github.com/torvalds/linux/commit/90af3209742db61a7f9d7d054a16165818cfc6d8).

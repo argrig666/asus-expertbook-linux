@@ -65,9 +65,10 @@ MODULE_DESC="B9406CAA audio: adaptive ghost-RT722 fix + HiFi UCM + cs35l56 firmw
 MODULE_VERSION="3.2.0"
 
 AUDIO_DKMS_NAME="asus-expertbook-sof-sdw"
-AUDIO_DKMS_VERSION="3.0.1"
+AUDIO_DKMS_VERSION="3.0.2"
 AUDIO_DKMS_SOURCE="$MODULE_DIR/dkms/${AUDIO_DKMS_NAME}-${AUDIO_DKMS_VERSION}"
-AUDIO_DKMS_TARGET="/usr/src/${AUDIO_DKMS_NAME}-${AUDIO_DKMS_VERSION}"
+AUDIO_DKMS_SRCDIR="/usr/src"
+AUDIO_DKMS_TARGET="$AUDIO_DKMS_SRCDIR/${AUDIO_DKMS_NAME}-${AUDIO_DKMS_VERSION}"
 
 # Always-installed payload: the SSP2-BT topology-noise silencer. The OEM
 # firmware and the HiFi UCM files are handled conditionally in
@@ -96,12 +97,11 @@ UCM_FILES=(
 )
 
 # cirrus_firmware_is_upstream: true when linux-firmware already ships the
-# 1043:15e4 CS35L56 tuning. On pacman systems that is linux-firmware-cirrus (or
-# the pre-split linux-firmware) >= 20260519; elsewhere the compressed file a
-# firmware package installs is taken as the signal.
+# 1043:15e4 CS35L56 tuning: on pacman systems linux-firmware-cirrus (or the
+# pre-split linux-firmware) >= 20260519, and everywhere the files themselves,
+# present and intact. A new package with missing files is reported for repair.
 cirrus_firmware_is_upstream() {
-  local v pkg
-  cirrus_upstream_files_present || return 1
+  local v pkg have=""
   if command -v pacman >/dev/null 2>&1; then
     for pkg in linux-firmware-cirrus linux-firmware; do
       v="$(pacman -Q "$pkg" 2>/dev/null | awk '{print $2}')" || true
@@ -109,24 +109,35 @@ cirrus_firmware_is_upstream() {
       v="${v#*:}"
       v="${v:0:8}"
       [[ $v =~ ^[0-9]{8}$ ]] || continue
-      (( v >= 20260519 )) && return 0
+      if (( v >= 20260519 )); then
+        have="$pkg $v"
+        break
+      fi
     done
-    return 1
+    [[ -n $have ]] || return 1
   fi
-  return 0
+  cirrus_upstream_files_present && return 0
+  if [[ -n $have ]]; then
+    warn "[audio-fix] $have should ship the 1043:15e4 CS35L56 files, but they are missing or damaged;"
+    warn "[audio-fix] using the bundled copies. Repair with: pacman -S ${have%% *}"
+  fi
+  return 1
 }
 
 # The package's replacements for the bundled files: per-amp tuning and the
-# generic .wmfw, compressed or not (an uncompressed copy only counts when a
-# package owns it, so our own leftovers never vouch for themselves).
+# generic .wmfw. A compressed file counts only if it decompresses; an
+# uncompressed one only when a package owns it, so our own leftovers never
+# vouch for themselves.
 cirrus_upstream_files_present() {
   local base f found
   for base in cs35l56-b0-dsp1-misc-104315e4-l2u0.bin cs35l56-b0-dsp1-misc-104315e4-l2u1.bin \
               cs35l56-b0-dsp1-misc-104315e4.wmfw; do
     f="/lib/firmware/cirrus/$base"
     found=0
-    if [[ -e $f.zst || -e $f.xz ]]; then
-      found=1
+    if [[ -e $f.zst ]]; then
+      zstd -tq -- "$(readlink -f -- "$f.zst")" >/dev/null 2>&1 && found=1
+    elif [[ -e $f.xz ]]; then
+      xz -tq -- "$(readlink -f -- "$f.xz")" >/dev/null 2>&1 && found=1
     elif [[ -e $f ]] && command -v pacman >/dev/null 2>&1 && pacman -Qqo "$f" >/dev/null 2>&1; then
       found=1
     fi
@@ -139,8 +150,12 @@ audio_install_firmware() {
   local entry src dst
   for entry in "${FIRMWARE_FILES[@]}"; do
     src="${entry%%:*}"; dst="${entry#*:}"
+    if [[ -e $dst ]] && command -v pacman >/dev/null 2>&1 && pacman -Qqo "$dst" >/dev/null 2>&1; then
+      warn "[audio-fix] leaving $dst: it belongs to a package"
+      continue
+    fi
     log "[audio-fix] installing -> $dst"
-    install -D -m 0644 "$src" "$dst"
+    install -D -m 0644 "$src" "$dst" || die "[audio-fix] cannot install $dst"
   done
 }
 
@@ -278,25 +293,64 @@ module_install_state() {
   fi
 }
 
+# DKMS modules this repository installed before, oldest first. Exact names,
+# never a wildcard: the two experimental modules it superseded, overlay 3.0.0
+# (cannot build on Linux 7.2.8+) and 3.0.1 (no kernel range, so DKMS also
+# built it for 7.3+, whose own sof_sdw is newer and has the quirk).
+AUDIO_DKMS_LEGACY=(
+  "sof-sdw-simplejack-fix/0.1"
+  "soundwire-intel-b9406-ghostfix/0.1"
+  "asus-expertbook-sof-sdw/3.0.0"
+  "asus-expertbook-sof-sdw/3.0.1"
+)
+
+# Succeeds when something was removed.
 audio_remove_legacy_dkms() {
-  local legacy name version source
-  for legacy in "sof-sdw-simplejack-fix/0.1" "soundwire-intel-b9406-ghostfix/0.1" \
-                "asus-expertbook-sof-sdw/3.0.0"; do
+  local legacy name version source removed=1
+  for legacy in "${AUDIO_DKMS_LEGACY[@]}"; do
     name="${legacy%/*}"
     version="${legacy#*/}"
-    source="/usr/src/${name}-${version}"
+    source="$AUDIO_DKMS_SRCDIR/${name}-${version}"
 
-    if [[ -n $(dkms status -m "$name" -v "$version" 2>/dev/null || true) ]]; then
+    if command -v dkms >/dev/null 2>&1 &&
+       [[ -n $(dkms status -m "$name" -v "$version" 2>/dev/null || true) ]]; then
       log "[audio-fix] removing superseded DKMS module $legacy"
       dkms remove -m "$name" -v "$version" --all || \
         warn "[audio-fix] DKMS could not completely remove $legacy"
+      removed=0
     fi
-
-    # Exact names of the two experimental modules superseded by this
-    # repository, plus overlay 3.0.0, which cannot build on Linux 7.2.8+.
-    # Never use a wildcard here.
-    rm -rf -- "$source"
+    if [[ -e $source ]]; then
+      if rm -rf -- "$source"; then
+        removed=0
+      else
+        warn "[audio-fix] could not remove $source"
+      fi
+    fi
   done
+  return "$removed"
+}
+
+# True while a superseded overlay is still installed for some kernel, that is,
+# still what gives that kernel working speakers.
+audio_legacy_dkms_active() {
+  local legacy
+  command -v dkms >/dev/null 2>&1 || return 1
+  for legacy in "${AUDIO_DKMS_LEGACY[@]}"; do
+    if dkms status -m "${legacy%/*}" -v "${legacy#*/}" 2>/dev/null | grep -q ': installed'; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+# "installed", "built" or nothing, for the current overlay on kernel $1.
+audio_dkms_state() {
+  local out
+  out="$(dkms status -m "$AUDIO_DKMS_NAME" -v "$AUDIO_DKMS_VERSION" -k "$1" 2>/dev/null || true)"
+  case $out in
+    *": installed"*) echo installed ;;
+    *": built"*)     echo built ;;
+  esac
 }
 
 audio_require_build_tools() {
@@ -327,13 +381,12 @@ audio_require_build_tools() {
 }
 
 audio_install_dkms() {
-  local kernel kernel_dir installed=0 needed=0
-  local -a build_kernels=()
+  local kernel kernel_dir needed=0 changed=0 keep=0 rc
+  local -a build_kernels=() uncovered=() built=() failed=()
 
   [[ -f $AUDIO_DKMS_SOURCE/dkms.conf ]] || \
     die "[audio-fix] bundled DKMS source is missing: $AUDIO_DKMS_SOURCE"
 
-  audio_remove_legacy_dkms
   # Preserve the previous convenience for the common case: when the running
   # kernel still needs DKMS, install its matching headers before inventorying
   # buildable kernels.
@@ -342,20 +395,21 @@ audio_install_dkms() {
   fi
 
   # Re-running install with the same, unchanged overlay keeps every working
-  # build and only builds kernels that lack one. Removing and rebuilding all
-  # of them would leave the machine without audio if one rebuild failed.
-  local keep=0
+  # build and only builds kernels that lack one.
   if command -v dkms >/dev/null 2>&1 && \
      [[ -n $(dkms status -m "$AUDIO_DKMS_NAME" -v "$AUDIO_DKMS_VERSION" \
        2>/dev/null || true) ]]; then
     if diff -rq "$AUDIO_DKMS_SOURCE" "$AUDIO_DKMS_TARGET" >/dev/null 2>&1; then
       keep=1
     else
-      log "[audio-fix] refreshing the changed DKMS registration"
-      dkms remove -m "$AUDIO_DKMS_NAME" -v "$AUDIO_DKMS_VERSION" --all
+      # Only a source change without a version bump lands here. It cannot be
+      # built beside the registered copy, so it is rebuilt in place.
+      warn "[audio-fix] the $AUDIO_DKMS_VERSION overlay source changed; rebuilding it in place"
+      dkms remove -m "$AUDIO_DKMS_NAME" -v "$AUDIO_DKMS_VERSION" --all ||
+        die "[audio-fix] could not remove the changed $AUDIO_DKMS_VERSION registration"
+      changed=1
     fi
   fi
-
   (( keep )) || rm -rf -- "$AUDIO_DKMS_TARGET"
 
   for kernel_dir in /usr/lib/modules/*; do
@@ -363,12 +417,20 @@ audio_install_dkms() {
     kernel="${kernel_dir##*/}"
     if audio_kernel_has_upstream_ghost_quirk "$kernel"; then
       log "[audio-fix] $kernel contains upstream B9406CAA ghost-RT722 quirk; DKMS not needed"
+      # Retire a build an earlier run or DKMS autoinstall left for it.
+      if (( keep )) && [[ -n $(audio_dkms_state "$kernel") ]]; then
+        dkms remove -m "$AUDIO_DKMS_NAME" -v "$AUDIO_DKMS_VERSION" -k "$kernel" ||
+          die "[audio-fix] could not remove the overlay from $kernel"
+        log "[audio-fix] removed the overlay from $kernel"
+        changed=1
+      fi
       continue
     fi
 
     needed=$(( needed + 1 ))
     if [[ ! -e $kernel_dir/build/Makefile ]]; then
       warn "[audio-fix] skipping $kernel: upstream quirk absent and matching headers are not installed"
+      uncovered+=("$kernel")
       continue
     fi
     build_kernels+=("$kernel")
@@ -376,12 +438,19 @@ audio_install_dkms() {
 
   if (( needed == 0 )); then
     if (( keep )); then
-      dkms remove -m "$AUDIO_DKMS_NAME" -v "$AUDIO_DKMS_VERSION" --all
+      dkms remove -m "$AUDIO_DKMS_NAME" -v "$AUDIO_DKMS_VERSION" --all ||
+        die "[audio-fix] could not remove the redundant DKMS overlay"
       rm -rf -- "$AUDIO_DKMS_TARGET"
+      changed=1
     fi
-    log "[audio-fix] every installed kernel contains the upstream DMI quirk; removed redundant DKMS overlay"
-    audio_refresh_initramfs "with the stock upstream SoundWire quirk"
-    return
+    if audio_remove_legacy_dkms; then
+      changed=1
+    fi
+    log "[audio-fix] every installed kernel contains the upstream DMI quirk; no DKMS overlay needed"
+    if (( changed )); then
+      audio_refresh_initramfs "with the stock upstream SoundWire quirk"
+    fi
+    return 0
   fi
 
   (( ${#build_kernels[@]} > 0 )) || \
@@ -389,37 +458,72 @@ audio_install_dkms() {
 
   audio_require_build_tools
   if (( ! keep )); then
-    install -d -m 0755 "$AUDIO_DKMS_TARGET"
-    cp -a -- "$AUDIO_DKMS_SOURCE/." "$AUDIO_DKMS_TARGET/"
-    dkms add -m "$AUDIO_DKMS_NAME" -v "$AUDIO_DKMS_VERSION"
+    if ! install -d -m 0755 "$AUDIO_DKMS_TARGET" ||
+       ! cp -a -- "$AUDIO_DKMS_SOURCE/." "$AUDIO_DKMS_TARGET/" ||
+       ! dkms add -m "$AUDIO_DKMS_NAME" -v "$AUDIO_DKMS_VERSION"; then
+      die "[audio-fix] could not register the $AUDIO_DKMS_VERSION overlay with DKMS"
+    fi
   fi
 
-  # One kernel failing to build must not stop the others: build what builds,
-  # refresh the images, then fail loudly so the version is not recorded.
-  local built=0 failed=()
+  # Compile first. Nothing installed changes until the new builds exist, so a
+  # compile failure cannot take working speakers away from a kernel.
   for kernel in "${build_kernels[@]}"; do
-    if (( keep )) && dkms status -m "$AUDIO_DKMS_NAME" -v "$AUDIO_DKMS_VERSION" -k "$kernel" \
-         2>/dev/null | grep -q ': installed'; then
-      log "[audio-fix] DKMS overlay already installed for $kernel"
-      installed=$(( installed + 1 ))
-      continue
-    fi
-    log "[audio-fix] building DKMS overlay for $kernel"
-    if dkms install -m "$AUDIO_DKMS_NAME" -v "$AUDIO_DKMS_VERSION" -k "$kernel"; then
-      installed=$(( installed + 1 ))
-      built=1
+    case $(audio_dkms_state "$kernel") in
+      installed)
+        log "[audio-fix] DKMS overlay $AUDIO_DKMS_VERSION already installed for $kernel"
+        continue ;;
+      built)
+        built+=("$kernel")
+        continue ;;
+    esac
+    log "[audio-fix] building DKMS overlay $AUDIO_DKMS_VERSION for $kernel"
+    if dkms build -m "$AUDIO_DKMS_NAME" -v "$AUDIO_DKMS_VERSION" -k "$kernel"; then
+      built+=("$kernel")
     else
-      warn "[audio-fix] the DKMS overlay failed to build for $kernel"
+      rc=$?
+      if (( rc == 77 )); then
+        warn "[audio-fix] $kernel lacks the upstream quirk but is newer than the overlay's 7.2 code; no overlay for it"
+        uncovered+=("$kernel")
+      else
+        warn "[audio-fix] the DKMS overlay failed to build for $kernel"
+        failed+=("$kernel")
+      fi
+    fi
+  done
+
+  # An older overlay still carrying some kernel is kept whole rather than
+  # traded for a partial set.
+  if (( ${#failed[@]} > 0 )) && audio_legacy_dkms_active; then
+    if (( ! keep )); then
+      dkms remove -m "$AUDIO_DKMS_NAME" -v "$AUDIO_DKMS_VERSION" --all || true
+      rm -rf -- "$AUDIO_DKMS_TARGET"
+    fi
+    die "[audio-fix] overlay $AUDIO_DKMS_VERSION did not build for: ${failed[*]}; the previous overlay stays installed (make.log under /var/lib/dkms/$AUDIO_DKMS_NAME)"
+  fi
+
+  # Swap: retire the superseded overlays, then install the new builds.
+  if audio_remove_legacy_dkms; then
+    changed=1
+  fi
+  for kernel in "${built[@]}"; do
+    log "[audio-fix] installing DKMS overlay $AUDIO_DKMS_VERSION for $kernel"
+    if dkms install -m "$AUDIO_DKMS_NAME" -v "$AUDIO_DKMS_VERSION" -k "$kernel"; then
+      changed=1
+    else
+      warn "[audio-fix] the DKMS overlay failed to install for $kernel"
       failed+=("$kernel")
     fi
   done
 
-  if (( built )); then
+  if (( changed )); then
     audio_refresh_initramfs "with the DKMS overlay"
   fi
   (( ${#failed[@]} == 0 )) || \
     die "[audio-fix] no ghost-RT722 overlay for: ${failed[*]} (see 'dkms status' and the make.log under /var/lib/dkms/$AUDIO_DKMS_NAME)"
-  (( installed > 0 )) || die "[audio-fix] no kernel with matching headers was found"
+  if (( ${#uncovered[@]} > 0 )); then
+    warn "[audio-fix] no overlay for: ${uncovered[*]}; the speakers will not work when booting it"
+  fi
+  return 0
 }
 
 AUDIO_INITRAMFS_REFRESHED=0
@@ -445,6 +549,7 @@ audio_remove_dkms() {
     dkms remove -m "$AUDIO_DKMS_NAME" -v "$AUDIO_DKMS_VERSION" --all
   fi
   rm -rf -- "$AUDIO_DKMS_TARGET"
+  audio_remove_legacy_dkms || true
 
   audio_refresh_initramfs "after removing the DKMS overlay"
 }
@@ -498,8 +603,9 @@ module_post_install() {
 }
 
 module_post_uninstall() {
-  audio_remove_dkms
+  # Firmware first, so the initramfs rebuilt by audio_remove_dkms holds no copy.
   audio_remove_bundled_firmware || true
+  audio_remove_dkms
 
   # Only tear down UCM files we placed ourselves. When alsa-ucm-conf >= 1.2.16
   # owns them, leave them be -- removing package files would break audio and
