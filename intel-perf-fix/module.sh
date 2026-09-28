@@ -48,22 +48,32 @@ module_post_install() {
   local prev
   prev="$(mod_get_installed_version)"
 
+  # pipefail carries a pacman/systemctl failure through tail.
   echo "  installing thermald (extra repo)"
-  pacman -S --needed --noconfirm thermald 2>&1 | tail -3 || true
+  pacman -S --needed --noconfirm thermald 2>&1 | tail -3 ||
+    die "[intel-perf-fix] could not install thermald"
 
   echo "  enabling thermald.service"
-  systemctl enable --now thermald.service 2>&1 | tail -1 || true
+  systemctl enable --now thermald.service 2>&1 | tail -1 ||
+    die "[intel-perf-fix] could not enable thermald.service"
+  systemctl is-active --quiet thermald.service ||
+    warn "[intel-perf-fix] thermald.service is enabled but not running; see: journalctl -u thermald"
 
   echo
   if [[ ${INTEL_PERF_LPMD:-0} == 1 ]]; then
     echo "  installing intel-lpmd (INTEL_PERF_LPMD=1)"
-    pacman -S --needed --noconfirm intel-lpmd 2>&1 | tail -3 || true
+    pacman -S --needed --noconfirm intel-lpmd 2>&1 | tail -3 ||
+      die "[intel-perf-fix] could not install intel-lpmd"
     echo "  enabling intel_lpmd.service"
-    systemctl enable --now intel_lpmd.service 2>&1 | tail -1 || true
+    systemctl enable --now intel_lpmd.service 2>&1 | tail -1 ||
+      die "[intel-perf-fix] could not enable intel_lpmd.service"
   elif [[ -n $prev ]] && systemctl is-enabled --quiet intel_lpmd.service 2>/dev/null; then
-    systemctl disable --now intel_lpmd.service 2>/dev/null || true
-    echo "  disabled intel_lpmd.service: intel-lpmd is opt-in since 1.2.0"
-    echo "  (keep it with: sudo INTEL_PERF_LPMD=1 ./patch.sh install intel-perf-fix)"
+    if systemctl disable --now intel_lpmd.service; then
+      echo "  disabled intel_lpmd.service: intel-lpmd is opt-in since 1.2.0"
+      echo "  (keep it with: sudo INTEL_PERF_LPMD=1 ./patch.sh install intel-perf-fix)"
+    else
+      warn "[intel-perf-fix] could not disable intel_lpmd.service"
+    fi
   else
     echo "  intel-lpmd is opt-in; set INTEL_PERF_LPMD=1 to install and enable it"
   fi
@@ -73,8 +83,9 @@ module_post_uninstall() {
   echo "  disabling thermald.service"
   systemctl disable --now thermald.service 2>/dev/null || true
 
-  if systemctl list-unit-files intel_lpmd.service >/dev/null 2>&1; then
-    systemctl disable --now intel_lpmd.service 2>/dev/null && echo "  disabled intel_lpmd.service"
+  if systemctl list-unit-files intel_lpmd.service >/dev/null 2>&1 &&
+     systemctl disable --now intel_lpmd.service 2>/dev/null; then
+    echo "  disabled intel_lpmd.service"
   fi
 
   echo
