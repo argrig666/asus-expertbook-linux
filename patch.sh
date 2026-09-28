@@ -167,6 +167,30 @@ mod_files_state() {
   fi
 }
 
+# run_errexit <command> [args...]
+# Runs the command in a subshell with errexit in force and returns its status.
+# `cmd || rc=$?` or `cmd || true` would not do: bash ignores `set -e` inside
+# any function called from a || list, so a failed step would carry on to "OK"
+# and a recorded version. Call this as a plain command, never in a condition.
+run_errexit() {
+  set +e
+  ( set -e; "$@" )
+  RUN_ERREXIT_RC=$?
+  set -e
+}
+
+# Menu actions keep going after a module fails, with errexit intact inside.
+menu_try() {
+  local what="$1"
+  if [[ $1 == with_module ]]; then
+    what="[$2] ${3#do_}"; what="${what%_one}"
+  fi
+  run_errexit "$@"
+  if (( RUN_ERREXIT_RC != 0 )); then
+    warn "$what failed (exit $RUN_ERREXIT_RC)"
+  fi
+}
+
 # Per-module operation wrappers (invoked inside `with_module` subshell).
 
 do_install_one() {
@@ -174,7 +198,8 @@ do_install_one() {
   prev="$(mod_get_installed_version)"
 
   if declare -F module_install >/dev/null; then
-    module_install || rc=$?
+    run_errexit module_install
+    rc=$RUN_ERREXIT_RC
     if (( rc == 10 )); then
       warn "[$MODULE_NAME] skipped"
       return 0
@@ -501,12 +526,12 @@ EOF
       ""|r|refresh) ;;
       i|install|update)
         m=$(_menu_resolve_index "$arg" "${mods[@]:-}") || { _menu_pause; continue; }
-        with_module "$m" do_install_one || true
+        menu_try with_module "$m" do_install_one
         _menu_pause
         ;;
       u|uninstall|remove)
         m=$(_menu_resolve_index "$arg" "${mods[@]:-}") || { _menu_pause; continue; }
-        with_module "$m" do_uninstall_one || true
+        menu_try with_module "$m" do_uninstall_one
         _menu_pause
         ;;
       d|diff)
@@ -528,15 +553,15 @@ EOF
         _menu_pause
         ;;
       I|install-all)
-        for m in "${mods[@]}"; do with_module "$m" do_install_one || true; done
+        for m in "${mods[@]}"; do menu_try with_module "$m" do_install_one; done
         _menu_pause
         ;;
       up|update-all)
-        cmd_update_all || true
+        menu_try cmd_update_all
         _menu_pause
         ;;
       U|uninstall-all)
-        for m in "${mods[@]}"; do with_module "$m" do_uninstall_one || true; done
+        for m in "${mods[@]}"; do menu_try with_module "$m" do_uninstall_one; done
         _menu_pause
         ;;
       l|list)

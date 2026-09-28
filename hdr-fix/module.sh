@@ -85,8 +85,10 @@ hdr_known_package() {
 }
 
 # Path the dynamic linker resolves libdisplay-info.so.3 to.
+# Reads all of ldconfig's output: an early awk exit would SIGPIPE ldconfig and,
+# under pipefail, fail the assignment that calls this.
 hdr_resolved() {
-  ldconfig -p 2>/dev/null | awk '$1 == "libdisplay-info.so.3" {print $NF; exit}'
+  ldconfig -p 2>/dev/null | awk '$1 == "libdisplay-info.so.3" && !n++ {print $NF}'
 }
 
 hdr_remove_override() {
