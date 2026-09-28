@@ -50,7 +50,7 @@ different distro, the modules themselves still apply — only the
 
 | Hardware | Symptom out of the box | After installing | Module |
 |---|---|---|---|
-| **PixArt I²C-HID** haptic touchpad `093A:4F05` (ACPI `ASCP1D80`) | **Touchpad doesn't move the cursor.** Kernel log spams `kernel bug: Touch jump detected and discarded.` libinput rejects every event. | Cursor responds to light touches like any normal laptop. Zero "Touch jump" lines. | [`touchpad-fix`](touchpad-fix/) |
+| **PixArt I²C-HID** haptic touchpad `093A:4F05` (ACPI `ASCP1D80`) | **Touchpad doesn't move the cursor.** Kernel log spams `kernel bug: Touch jump detected and discarded.` libinput rejects every event. A separate `i2c_designware.0` wedge can freeze the whole desktop; see [below](#if-the-desktop-freezes). | Cursor responds to light touches like any normal laptop. Zero "Touch jump" lines. The bus wedge is a kernel stall the quirk does not prevent. | [`touchpad-fix`](touchpad-fix/) |
 | **Cirrus CS42L43** codec + 2× **CS35L56** speaker amps (PCI subsystem `1043:15e4`) | **Dummy Output / silent speakers.** A ghost RT722 can abort ALSA card registration; older userspace also lacks tuning/UCM. | Uses the accepted in-kernel B9406 quirk when present and DKMS only on older kernels; HiFi routing and calibrated amps work. | [`audio-fix`](audio-fix/) |
 | **Intel Wi-Fi 7 BE211** Panther Lake CNVi (`8086:e440`) | **Wi-Fi 7 (802.11be / EHT) is unstable.** EHT RX can collapse to MCS0/NSS1 and MLO sessions tear down. Linux 7.2's C106 firmware may separately flood `missed beacons` warnings even while data flows. | EHT disabled (`disable_11be=Y`) → fast **Wi-Fi 6 / HE** fallback; status reports firmware and warning count without hiding logs or forcing a firmware downgrade. | [`wifi-fix`](wifi-fix/) |
 | **Samsung Display Corp** eDP panel + Intel **`xe`** driver (Xe3 Panther Lake iGPU) | **Linux 7.2's Panel Replay default misbehaves on this panel:** PSR idle timeouts with on-screen corruption, flicker, VRR smearing, stale frames, and HDR washed out after every HDR modeset. Brightness can also change in sysfs without changing panel luminance. | Self-refresh pinned to PSR1: owners report no flicker, stale frames or VRR smearing, and HDR stays vivid across toggles; forced VESA DPCD backlight makes KDE/sysfs brightness work. | [`display-fix`](display-fix/) |
@@ -66,6 +66,36 @@ different distro, the modules themselves still apply — only the
 > codec dirs) that distros use to support every other laptop. We just
 > haven't been added to the canonical lists yet — the
 > [`upstream-patches/`](upstream-patches/) folder is the path to that.
+
+## If the desktop freezes
+
+Two different failures end in a frozen desktop on this laptop. The runbook
+[`docs/b9406-desktop-freeze.md`](docs/b9406-desktop-freeze.md) has the
+commands that tell them apart, the logged incidents and the recovery steps.
+
+- **Display self-refresh.** The kernel log shows `Timed out waiting PSR idle
+  state`, DSB errors or FIFO underruns. Install `display-fix` 1.4 and reboot;
+  it pins self-refresh to PSR1.
+- **Touchpad I²C wedge.** The PixArt touchpad sits on `i2c_designware.0`.
+  When that controller wedges, the log shows `controller timed out`, then
+  `timeout in disabling adapter`, then `timeout waiting for bus ready` about
+  twenty times a second. The touchpad IRQ thread and `i915_flip` workers sit
+  in `D` state, so the picture stops as well. It was logged on
+  `linux 7.2.3-arch1-3` at the end of long sessions, once within a minute of
+  a resume, with no PSR or DSB error in the journal. `touchpad-fix` does not
+  prevent it. While the session still accepts a command, rebind the touchpad
+  driver (`omarchy restart trackpad` on Omarchy):
+
+  ```sh
+  dev=i2c-ASCP1D80:00
+  echo "$dev" | sudo tee /sys/bus/i2c/drivers/i2c_hid_acpi/unbind
+  sleep 1
+  echo "$dev" | sudo tee /sys/bus/i2c/drivers/i2c_hid_acpi/bind
+  ```
+
+  If the rebind hangs, or the picture is already frozen, reboot. Do not poll
+  `acpitz` or ASUS `hwmon` fan/temperature nodes from a status bar: the
+  reporter isolated a recurring stall to a widget doing exactly that.
 
 ## Quick install
 
