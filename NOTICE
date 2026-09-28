@@ -17,3 +17,9 @@ files. They are NOT covered by this repository's MIT license.
     Origin: cirrus/cs35l56/CS35L56_Rev3.13.4.wmfw from upstream
     linux-firmware, renamed into the per-OEM filename pattern the
     cs35l56 driver looks for. Same file, two filenames.
+
+The patches in hdr-fix/patches/ are upstream libdisplay-info commits
+(https://gitlab.freedesktop.org/emersion/libdisplay-info), MIT licensed,
+backported unchanged onto the 0.3.0 release apart from dropping two test-data
+files that 0.3.0 does not contain. Upstream commits: 788c056, d535192, 34b3635,
+4713505, 7324cca, 73ab82d, 73ec53d.
