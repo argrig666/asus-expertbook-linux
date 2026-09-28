@@ -147,14 +147,17 @@ signature from the kernel headers. 3.0.2 adds a kernel range
 7.2-level copy although 7.3 has the quirk itself.
 
 Upgrading the overlay compiles the new version for every kernel first. A
-kernel's older overlay is taken off only once its new build exists, and put
-back if installing that build fails; a kernel whose build fails, or that has
-no headers, keeps the older overlay, and the install then stops and names it.
+kernel's older overlay is taken off (`dkms uninstall`, which keeps its build)
+only once its new build exists, and reinstalled from that build if installing
+the new one fails; a kernel whose build fails, or that has no headers, keeps
+the older overlay, and the install then stops and names it. Older overlays and
+their sources are deleted only when no kernel still runs one.
 Kernels that contain the upstream quirk lose any overlay build left for them.
 An overlay change always comes with a new version: a registered version whose
 source differs from the checkout is refused rather than rebuilt in place. The
-source in `/usr/src` is owned by root (earlier installs left it owned by the
-user who cloned the repository, although root compiles it into the kernel).
+source in `/usr/src` is owned by root, older overlays' sources included
+(earlier installs left them owned by the user who cloned the repository,
+although root compiles them into the kernel).
 
 The permanent fix was accepted as upstream commit
 [`90af3209742d`](https://github.com/torvalds/linux/commit/90af3209742db61a7f9d7d054a16165818cfc6d8).

@@ -346,31 +346,46 @@ audio_remove_legacy_dkms() {
   return "$removed"
 }
 
-# Take every superseded overlay off kernel $1, listing what went in
-# AUDIO_RETIRED so a failed swap can put it back.
+# Take every superseded overlay off kernel $1 with `dkms uninstall`, which
+# puts the stock module back but keeps the build, so a failed swap can
+# reinstall it without compiling. What was taken off goes in AUDIO_RETIRED.
 audio_retire_legacy_on() {
   local legacy
   AUDIO_RETIRED=()
   for legacy in "${AUDIO_DKMS_LEGACY[@]}"; do
-    [[ -n $(audio_dkms_state_of "$legacy" "$1") ]] || continue
+    [[ $(audio_dkms_state_of "$legacy" "$1") == installed ]] || continue
     log "[audio-fix] taking $legacy off $1"
-    dkms remove -m "${legacy%/*}" -v "${legacy#*/}" -k "$1" ||
-      die "[audio-fix] DKMS could not remove $legacy from $1"
+    dkms uninstall -m "${legacy%/*}" -v "${legacy#*/}" -k "$1" ||
+      die "[audio-fix] DKMS could not uninstall $legacy from $1"
     AUDIO_RETIRED+=("$legacy")
   done
 }
 
-# Put back what audio_retire_legacy_on took off kernel $1. Removing a
-# version's last build unregisters it, so it is added again from its source.
+# Reinstall what audio_retire_legacy_on took off kernel $1, from its kept
+# build. Fails when any of it could not be put back.
 audio_restore_legacy_on() {
-  local legacy
+  local legacy rc=0
   for legacy in "${AUDIO_RETIRED[@]}"; do
-    [[ -n $(dkms status -m "${legacy%/*}" -v "${legacy#*/}" 2>/dev/null || true) ]] ||
-      dkms add -m "${legacy%/*}" -v "${legacy#*/}" || true
     if dkms install -m "${legacy%/*}" -v "${legacy#*/}" -k "$1"; then
       log "[audio-fix] put $legacy back on $1"
     else
       warn "[audio-fix] could not put $legacy back on $1"
+      rc=1
+    fi
+  done
+  return "$rc"
+}
+
+# Superseded overlay sources were copied with the checkout owner's ownership
+# by older versions; root compiles them, so take them over before any DKMS
+# call can use them.
+audio_secure_legacy_sources() {
+  local legacy source
+  for legacy in "${AUDIO_DKMS_LEGACY[@]}"; do
+    source="$AUDIO_DKMS_SRCDIR/${legacy%/*}-${legacy#*/}"
+    [[ -d $source ]] || continue
+    if ! chown -R root:root -- "$source" || ! chmod -R go-w -- "$source"; then
+      die "[audio-fix] cannot give $source to root"
     fi
   done
 }
@@ -404,7 +419,7 @@ audio_require_build_tools() {
 
 audio_install_dkms() {
   local kernel kernel_dir legacy needed=0 changed=0 keep=0 rc
-  local -a build_kernels=() uncovered=() built=() failed=() held=()
+  local -a build_kernels=() uncovered=() built=() failed=() held=() unresolved=()
 
   [[ -f $AUDIO_DKMS_SOURCE/dkms.conf ]] || \
     die "[audio-fix] bundled DKMS source is missing: $AUDIO_DKMS_SOURCE"
@@ -415,6 +430,7 @@ audio_install_dkms() {
   if ! audio_kernel_has_upstream_ghost_quirk; then
     audio_require_build_tools
   fi
+  audio_secure_legacy_sources
 
   # Re-running install with the same, unchanged overlay keeps every working
   # build and only builds kernels that lack one. The same version with other
@@ -532,7 +548,9 @@ audio_install_dkms() {
     else
       warn "[audio-fix] the DKMS overlay failed to install for $kernel"
       failed+=("$kernel")
-      audio_restore_legacy_on "$kernel"
+      if ! audio_restore_legacy_on "$kernel"; then
+        unresolved+=("$kernel")
+      fi
     fi
   done
 
@@ -546,8 +564,9 @@ audio_install_dkms() {
     done
   done
 
-  # Superseded overlays go only when no kernel still depends on them.
-  if (( ${#held[@]} == 0 )) && audio_remove_legacy_dkms; then
+  # Superseded overlays (and their sources and builds) go only when no kernel
+  # still runs one and no rollback is left half done.
+  if (( ${#held[@]} == 0 && ${#unresolved[@]} == 0 )) && audio_remove_legacy_dkms; then
     changed=1
   fi
 
@@ -557,11 +576,12 @@ audio_install_dkms() {
   if (( ${#held[@]} > 0 )); then
     warn "[audio-fix] kept the older overlay for: ${held[*]}"
   fi
+  (( ${#unresolved[@]} == 0 )) || \
+    die "[audio-fix] no overlay at all on: ${unresolved[*]}; the older builds and sources are kept, see 'dkms status'"
   (( ${#failed[@]} == 0 )) || \
     die "[audio-fix] no new ghost-RT722 overlay for: ${failed[*]} (see 'dkms status' and the make.log under /var/lib/dkms/$AUDIO_DKMS_NAME)"
-  if (( ${#uncovered[@]} > 0 )); then
-    warn "[audio-fix] no overlay for: ${uncovered[*]}; its speakers need the older overlay or headers to build this one"
-  fi
+  (( ${#uncovered[@]} == 0 )) || \
+    die "[audio-fix] no overlay for: ${uncovered[*]} (no headers, or newer than the overlay's 7.2 code); the speakers will not work when booting it"
   return 0
 }
 
