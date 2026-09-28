@@ -208,6 +208,9 @@ is loaded.
 2. The Cirrus CS35L56 speaker amps need per-OEM tuning firmware. As of
    `linux-firmware-cirrus >= 20260519` it ships upstream for `1043:15e4`; on
    anything older the amps boot `FIRMWARE_MISSING` and the bundled blobs fill in.
+   This unit has no `CirrusSmartAmpCalibrationData` EFI variable, so the kernel
+   skips per-unit calibration silently and no "Calibration applied" line
+   appears; the tuning still loads.
 3. The card reports a **combined speaker-codec** string — `spk:cs35l56+cs42l43-spk`
    (or two `spk:` tags on older kernels). Stock `alsa-ucm-conf 1.2.15.x` has no
    UCM dir for it **and** its `SpeakerCodec` regex drops the trailing `-spk`, so
@@ -215,17 +218,21 @@ is loaded.
    uses `stereo-fallback`, which plays to the **Jack** PCM (device 0), not the
    **Speaker** PCM (device 2) — silent speakers, even though `aplay -D plughw:0,2`
    works.
-4. The generic SOF topology declares an unused `SSP2-BT` hardware-offload PCM
-   with no firmware blob; WirePlumber's probe of it spams the kernel log
-   (~40% of all kernel errors at boot).
+4. On kernels before 7.1 the generic SOF topology declares an unused `SSP2-BT`
+   hardware-offload PCM with no firmware blob; WirePlumber's probe of it spams
+   the kernel log (~40% of all kernel errors at boot). The 7.1+ function
+   topologies no longer expose it.
+5. SOF firmware and topologies are the separate `sof-firmware` package. A
+   minimal install can lack it, and then no card appears even with the
+   ghost-RT722 fix (`SOF firmware and/or topology file not found`).
 
 ```
 $ sudo dmesg | grep cs35l56
-cs35l56 sdw:0:2:01fa:3556:01:0: FIRMWARE_MISSING                    ← without
-cs35l56 sdw:0:2:01fa:3556:01:1: FIRMWARE_MISSING                    ← without
-─────────────────────────────────────────────────────────────────────────
-cs35l56 sdw:0:2:01fa:3556:01:0: Calibration applied                 ← with
-cs35l56 sdw:0:2:01fa:3556:01:0: Tuning PID: 0x23134, SID: 0x470200  ← with
+cs35l56 sdw:0:2:01fa:3556:01:0: FIRMWARE_MISSING                         ← without
+cs35l56 sdw:0:2:01fa:3556:01:1: FIRMWARE_MISSING                         ← without
+──────────────────────────────────────────────────────────────────────────────
+cs35l56 sdw:0:2:01fa:3556:01:0: DSP1: Firmware: 1a00d6 vendor: 0x2 v3.13.4, 41 algorithms  ← with
+cs35l56 sdw:0:2:01fa:3556:01:0: Tuning PID: 0x23134, SID: 0x470200, TID: 0x84b06           ← with
 ```
 
 </details>
@@ -234,10 +241,19 @@ cs35l56 sdw:0:2:01fa:3556:01:0: Tuning PID: 0x23134, SID: 0x470200  ← with
 
 The proper fix is the upstream **HiFi UCM**, not a profile hack — named ports,
 headphone-jack **auto-switching**, working volume + mic-mute LED. **It's upstream
-as of `alsa-ucm-conf 1.2.16`**, so on 1.2.16+ this module installs only the
-firmware + the SSP2-BT drop-in; the UCM rows below are dropped in **only as a
-fallback on `alsa-ucm-conf < 1.2.16`** (and the `NoExtract` pin is removed
-automatically once the package crosses 1.2.16).
+as of `alsa-ucm-conf 1.2.16`**, and the speaker firmware is upstream as of
+`linux-firmware-cirrus 20260519`. On current packages this module therefore
+installs only the SSP2-BT drop-in and, where needed, the DKMS overlay; the UCM
+and firmware rows below are dropped in **only as a fallback on older
+packages** (the `NoExtract` pin is removed automatically once `alsa-ucm-conf`
+crosses 1.2.16). Install also pulls in `sof-firmware` when it is missing.
+
+3.2 stopped installing the bundled firmware next to a current
+`linux-firmware-cirrus`. The copies were byte-identical to the package's, but
+as uncompressed files they shadowed it, and their per-amp `-l2uN.wmfw` names,
+which upstream never uses, are looked up before the package's generic
+`104315e4.wmfw`. A newer Cirrus firmware would never have loaded. Updating
+removes copies identical to the bundled ones and leaves any other file alone.
 
 `audio-fix` 3.1 uses a small B9406CAA-only `snd-soc-sof-sdw` DKMS overlay only
 on kernels that still need it. It discards only an RT722 that the SoundWire
@@ -246,22 +262,26 @@ model are untouched. The permanent DMI fix is already accepted upstream as
 [`90af3209742d`](https://github.com/torvalds/linux/commit/90af3209742db61a7f9d7d054a16165818cfc6d8).
 Install inspects every installed kernel module rather than guessing from its
 version, skips DKMS on kernels containing the upstream quirk (Linux 7.3+), and
-removes the overlay automatically once every installed kernel has it. 3.1.1
-fixes the overlay build on Linux 7.2.8+ (a stable backport changed the
-`soc_sdw_utils` API, so 3.0.0 silently failed to rebuild and audio fell back to
-*Dummy Output*), and no longer forces `LLVM=1` on GCC-built kernels.
+removes the overlay automatically once every installed kernel has it. The
+quirk carries no `Cc: stable`, so no 7.2.y or 6.18.y release has it yet and
+7.2 kernels still need the overlay. 3.1.1 fixes the overlay build on 7.2.y
+kernels whose `soc_sdw_utils` API gained the `dev, ctx` arguments through a
+stable backport (3.0.0 silently failed to rebuild there and audio fell back to
+*Dummy Output*); it probes the header instead of trusting the version, and no
+longer forces `LLVM=1` on GCC-built kernels.
 
 | File | Path | What it does |
 |---|---|---|
-| `cs35l56-…-l2u{0,1}.{bin,wmfw}` | `/lib/firmware/cirrus/` | Per-OEM tuning + ROM 3.4.4→3.13.4 patch. **Fallback** — `linux-firmware-cirrus >= 20260519` now ships these. |
+| `cs35l56-…-l2u{0,1}.{bin,wmfw}` | `/lib/firmware/cirrus/` | Per-OEM tuning + ROM 3.4.4→3.13.4 patch. **Only on `linux-firmware-cirrus < 20260519`**; newer packages ship identical files, and the bundled copies are removed there. |
 | `sof-soundwire.conf` | `/usr/share/alsa/ucm2/sof-soundwire/` | Upstream `alsa-ucm-conf` master: fixes the `SpeakerCodec` regex to keep the `-spk` suffix. Pinned via `NoExtract` so a partial upgrade can't revert it (both only on `alsa-ucm-conf < 1.2.16`). |
 | `cs35l56+cs42l43-spk.conf`, `cs42l43-spk+cs35l56.conf` | `/usr/share/alsa/ucm2/sof-soundwire/` | The Speaker device for the combined codec — routes playback to `hw:,2` and the CS35L56 + CS42L43 amps. |
 | `cs42l43-spk+cs35l56-init.conf` | `/usr/share/alsa/ucm2/codecs/cs42l43-spk+cs35l56/` | Combined codec init (control remap + LED attach). `module.sh` symlinks `cs35l56+cs42l43-spk` → this so both kernel names resolve. |
-| `52-disable-bt-sco-offload.conf` | `/etc/wireplumber/wireplumber.conf.d/` | Disables the dead `SSP2-BT` offload PCM so its probe stops spamming the log. Bluetooth audio (A2DP/HFP) still works via the PipeWire software path. |
+| `52-disable-bt-sco-offload.conf` | `/etc/wireplumber/wireplumber.conf.d/` | Disables the dead `SSP2-BT` offload PCM so its probe stops spamming the log on pre-7.1 kernels (inert on 7.1+, where the PCM no longer exists). Bluetooth audio (A2DP/HFP) still works via the PipeWire software path. |
 | `dkms/asus-expertbook-sof-sdw-3.0.1/` | `/usr/src/` + `/lib/modules/*/updates/dkms/` | Compatibility overlay for released kernels lacking upstream commit `90af3209742d`; not built where the in-kernel DMI quirk is detected. |
 
-> The **F1 speaker-mute LED can't be fixed from Linux** — this laptop exposes no
-> speaker-mute LED device, only `platform::micmute` (which the HiFi UCM drives).
+> The **F1 speaker-mute LED** needs `asus-wmi`'s `platform::mute` (WMI device
+> `0x0004001C`), which lands in Linux 7.4. Until then only `platform::micmute`
+> exists; the kernel's `audio-micmute` trigger drives it.
 
 </details>
 
@@ -737,9 +757,13 @@ operations know whether each module is `up to date`, `update available`,
   `cs35l56` driver. Anything older won't even probe most of this
   hardware.
 - **Tested on:** the audio DKMS overlay compiles against
-  `linux-cachyos-lts 6.18.42`, `linux-cachyos 7.2.0`, and
-  `linux-cachyos-rc 7.2.0-rc7`. Matching kernel headers are required; the
-  normal Arch/CachyOS DKMS hooks rebuild it before boot images on upgrades.
+  `linux-cachyos-lts 6.18.52`, `linux-cachyos 7.2.8`, and
+  `linux-cachyos-rc 7.3.0-rc4` (where the upstream quirk makes it unnecessary).
+  Matching kernel headers are required; the normal Arch/CachyOS DKMS hooks
+  rebuild it before boot images on upgrades. Compiling is not the same as a
+  working card on 6.18: that kernel lacks the default function-topology machine
+  fallback and the `ptl_cs42l43_agg_l3_cs35l56_l2` match that arrived in 6.19,
+  so speaker audio on 6.18 LTS is unverified.
 - **Distros:** Arch and Arch derivatives (CachyOS, EndeavourOS, Manjaro)
   all use the same `/etc/udev/hwdb.d`, `/etc/libinput`,
   `/etc/modprobe.d`, `/etc/wireplumber/wireplumber.conf.d` paths the

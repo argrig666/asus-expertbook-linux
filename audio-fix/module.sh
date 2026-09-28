@@ -5,9 +5,14 @@
 # (PCI subsystem 1043:15e4) through the proper ALSA UCM "HiFi" profile.
 #
 #   1) cs35l56 amps need OEM tuning firmware (.bin tuning + .wmfw patch,
-#      ROM 3.4.4 -> 3.13.4). linux-firmware-cirrus >= 20260519 now ships these
-#      upstream for 1043:15e4; the bundled blobs here are a fallback for older
-#      linux-firmware (same filenames the driver looks for).
+#      ROM 3.4.4 -> 3.13.4). linux-firmware-cirrus >= 20260519 ships these
+#      upstream for 1043:15e4 (per-amp -l2uN.bin plus the generic Rev 3.13.4
+#      .wmfw), byte-identical to the bundled copies. The bundled blobs are a
+#      fallback for older linux-firmware only. Installed next to a current
+#      package they would shadow it, and their per-amp -l2uN.wmfw names are
+#      looked up before the package's generic .wmfw, so a newer Cirrus
+#      firmware would never load. On current linux-firmware, install removes
+#      copies that are identical to ours.
 #
 #   2) The card reports a combined speaker-codec component string
 #      ("spk:cs35l56+cs42l43-spk", or two "spk:" tags on older kernels). Stock
@@ -40,33 +45,44 @@
 #      with no firmware blob; WirePlumber's probe of it spams the kernel log
 #      (~40% of all kernel errors at boot). 52-disable-bt-sco-offload.conf
 #      disables that node. Bluetooth audio (A2DP music + HFP calls) keeps
-#      working over the normal PipeWire software path.
+#      working over the normal PipeWire software path. The Linux 7.1+ function
+#      topologies no longer expose that PCM, so the drop-in is inert there; it
+#      stays for older kernels.
+#
+#   5) SOF firmware and topologies come from the separate sof-firmware package
+#      on Arch. A minimal install can lack it, and then no card appears even
+#      with the ghost-RT722 fix ("SOF firmware and/or topology file not
+#      found"). Install pulls it in; status reports it.
 #
 # This replaced the old "pro-audio profile pin" workaround (<= v1.3.0). HiFi is
 # the correct approach: headphone jack auto-switching, named ports, working
-# volume + mic-mute LED. NOTE: the speaker (F1) mute LED cannot be fixed from
-# Linux on this laptop -- it exposes no speaker-mute LED device, only
-# platform::micmute (which the HiFi UCM does drive).
+# volume + mic-mute LED. NOTE: the speaker (F1) mute LED needs asus-wmi's
+# platform::mute (WMI device 0x0004001C), which lands in Linux 7.4. Until then
+# only platform::micmute exists; the kernel's audio-micmute trigger drives it.
 
 MODULE_NAME="audio-fix"
 MODULE_DESC="B9406CAA audio: adaptive ghost-RT722 fix + HiFi UCM + cs35l56 firmware"
-MODULE_VERSION="3.1.1"
+MODULE_VERSION="3.2.0"
 
 AUDIO_DKMS_NAME="asus-expertbook-sof-sdw"
 AUDIO_DKMS_VERSION="3.0.1"
 AUDIO_DKMS_SOURCE="$MODULE_DIR/dkms/${AUDIO_DKMS_NAME}-${AUDIO_DKMS_VERSION}"
 AUDIO_DKMS_TARGET="/usr/src/${AUDIO_DKMS_NAME}-${AUDIO_DKMS_VERSION}"
 
-# Always-installed payload: OEM firmware (fallback for linux-firmware-cirrus
-# < 20260519) + the SSP2-BT topology-noise silencer. The HiFi UCM files are
-# handled conditionally in module_post_install (upstream since alsa-ucm-conf
-# 1.2.16), so they are deliberately NOT listed here.
+# Always-installed payload: the SSP2-BT topology-noise silencer. The OEM
+# firmware and the HiFi UCM files are handled conditionally in
+# module_post_install (upstream since linux-firmware-cirrus 20260519 and
+# alsa-ucm-conf 1.2.16), so they are deliberately NOT listed here.
 MODULE_FILES=(
+  "52-disable-bt-sco-offload.conf:/etc/wireplumber/wireplumber.conf.d/52-disable-bt-sco-offload.conf"
+)
+
+# OEM speaker firmware -- installed only when linux-firmware lacks it.
+FIRMWARE_FILES=(
   "cs35l56-b0-dsp1-misc-104315e4-l2u0.bin:/lib/firmware/cirrus/cs35l56-b0-dsp1-misc-104315e4-l2u0.bin"
   "cs35l56-b0-dsp1-misc-104315e4-l2u0.wmfw:/lib/firmware/cirrus/cs35l56-b0-dsp1-misc-104315e4-l2u0.wmfw"
   "cs35l56-b0-dsp1-misc-104315e4-l2u1.bin:/lib/firmware/cirrus/cs35l56-b0-dsp1-misc-104315e4-l2u1.bin"
   "cs35l56-b0-dsp1-misc-104315e4-l2u1.wmfw:/lib/firmware/cirrus/cs35l56-b0-dsp1-misc-104315e4-l2u1.wmfw"
-  "52-disable-bt-sco-offload.conf:/etc/wireplumber/wireplumber.conf.d/52-disable-bt-sco-offload.conf"
 )
 
 # HiFi UCM payload -- needed only on alsa-ucm-conf < 1.2.16. 1.2.16+ ships these
@@ -78,6 +94,60 @@ UCM_FILES=(
   "cs42l43-spk+cs35l56.conf:/usr/share/alsa/ucm2/sof-soundwire/cs42l43-spk+cs35l56.conf"
   "cs42l43-spk+cs35l56-init.conf:/usr/share/alsa/ucm2/codecs/cs42l43-spk+cs35l56/init.conf"
 )
+
+# cirrus_firmware_is_upstream: true when linux-firmware already ships the
+# 1043:15e4 CS35L56 tuning. On pacman systems that is linux-firmware-cirrus (or
+# the pre-split linux-firmware) >= 20260519; elsewhere the compressed file a
+# firmware package installs is taken as the signal.
+cirrus_firmware_is_upstream() {
+  local v pkg
+  if command -v pacman >/dev/null 2>&1; then
+    for pkg in linux-firmware-cirrus linux-firmware; do
+      v="$(pacman -Q "$pkg" 2>/dev/null | awk '{print $2}')" || true
+      [[ -n $v ]] || continue
+      v="${v#*:}"
+      v="${v:0:8}"
+      [[ $v =~ ^[0-9]{8}$ ]] || continue
+      (( v >= 20260519 )) && return 0
+    done
+    return 1
+  fi
+  local f=/lib/firmware/cirrus/cs35l56-b0-dsp1-misc-104315e4-l2u0.bin
+  [[ -e $f.zst || -e $f.xz ]]
+}
+
+audio_install_firmware() {
+  local entry src dst
+  for entry in "${FIRMWARE_FILES[@]}"; do
+    src="${entry%%:*}"; dst="${entry#*:}"
+    log "[audio-fix] installing -> $dst"
+    install -D -m 0644 "$src" "$dst"
+  done
+}
+
+# Remove only copies that are byte-identical to the bundled files, so a
+# firmware the user placed deliberately is never deleted.
+audio_remove_bundled_firmware() {
+  local entry src dst
+  for entry in "${FIRMWARE_FILES[@]}"; do
+    src="${entry%%:*}"; dst="${entry#*:}"
+    [[ -f $dst ]] || continue
+    if cmp -s "$src" "$dst"; then
+      rm -f -- "$dst"
+      log "[audio-fix] removed bundled copy $dst"
+    else
+      warn "[audio-fix] leaving $dst: it differs from the bundled file"
+    fi
+  done
+}
+
+# SOF DSP firmware and topologies are a separate Arch package (#23).
+audio_require_sof_firmware() {
+  command -v pacman >/dev/null 2>&1 || return 0
+  pacman -Q sof-firmware >/dev/null 2>&1 && return 0
+  log "[audio-fix] installing sof-firmware (SOF DSP firmware and topologies)"
+  pacman -S --needed --noconfirm sof-firmware
+}
 
 # ucm_hifi_is_upstream: true when the installed alsa-ucm-conf already ships the
 # combined cs35l56+cs42l43-spk HiFi UCM (>= 1.2.16). On non-pacman systems we
@@ -289,7 +359,15 @@ audio_remove_dkms() {
 }
 
 module_post_install() {
+  audio_require_sof_firmware
   audio_install_dkms
+
+  if cirrus_firmware_is_upstream; then
+    log "[audio-fix] linux-firmware ships the 1043:15e4 CS35L56 tuning -- not installing bundled firmware."
+    audio_remove_bundled_firmware
+  else
+    audio_install_firmware
+  fi
 
   if ucm_hifi_is_upstream; then
     local v; v="$(pacman -Q alsa-ucm-conf 2>/dev/null | awk '{print $2}')"
@@ -326,6 +404,7 @@ module_post_install() {
 
 module_post_uninstall() {
   audio_remove_dkms
+  audio_remove_bundled_firmware
 
   # Only tear down UCM files we placed ourselves. When alsa-ucm-conf >= 1.2.16
   # owns them, leave them be -- removing package files would break audio and
@@ -379,6 +458,23 @@ module_status_extra() {
     fw_state="${c_dim}cs35l56 firmware state not in current boot log${c_off}"
   fi
   printf '  cs35l56:  %s\n' "$fw_state"
+  local entry dst shadowing=0
+  if cirrus_firmware_is_upstream; then
+    for entry in "${FIRMWARE_FILES[@]}"; do
+      dst="${entry#*:}"
+      [[ -f $dst ]] && shadowing=1
+    done
+    if (( shadowing )); then
+      printf '  firmware: %sbundled copies shadow linux-firmware; reinstall audio-fix to remove them%s\n' \
+        "$c_warn" "$c_off"
+    else
+      printf '  firmware: %sfrom linux-firmware (no bundled copies)%s\n' "$c_ok" "$c_off"
+    fi
+  fi
+  if command -v pacman >/dev/null 2>&1 && ! pacman -Q sof-firmware >/dev/null 2>&1; then
+    printf '  SOF:      %ssof-firmware is not installed; no SOF firmware/topology, so no card%s\n' \
+      "$c_warn" "$c_off"
+  fi
 
   # PipeWire's "Dummy Output" is not a UCM/profile problem: it means the
   # kernel never registered an ALSA card. Previously status printed no card

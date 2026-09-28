@@ -1,7 +1,7 @@
 # ASUS ExpertBook Ultra (B9406CAA) — speaker / headphone audio fix on Linux
 
 Out of the box on Linux 6.18+, the internal speakers are silent (and the F1
-mute LED is stuck "on"). Four independent problems stack up:
+mute LED is stuck "on"). Five independent problems stack up:
 
 1. **CS35L56 firmware missing.** The Cirrus **CS35L56** speaker amplifiers boot
    in `FIRMWARE_MISSING` state. They each need a per-OEM `.bin` (tuning) **and**
@@ -27,10 +27,16 @@ mute LED is stuck "on"). Four independent problems stack up:
    aborts `sof_sdw` with `-EEXIST` / error `-12`, leaving PipeWire with only
    **Dummy Output**.
 
-4. **Dead SSP2-BT topology node.** The generic SOF topology declares an unused
-   `SSP2-BT` hardware-offload PCM with no firmware blob; WirePlumber's probe of
-   it spams the kernel log (`SSP2-BT.capture: failed to prepare`, ~40% of all
-   kernel errors at boot).
+4. **Dead SSP2-BT topology node (kernels before 7.1).** The generic SOF
+   topology declares an unused `SSP2-BT` hardware-offload PCM with no firmware
+   blob; WirePlumber's probe of it spams the kernel log
+   (`SSP2-BT.capture: failed to prepare`, ~40% of all kernel errors at boot).
+   The 7.1+ function topologies no longer expose that PCM.
+
+5. **`sof-firmware` missing.** SOF firmware and topologies are a separate Arch
+   package. Without it no card appears even with every fix above
+   (`SOF firmware and/or topology file not found ... sof-ptl.ri`). Install pulls
+   it in when it is missing.
 
 ## What this module does
 
@@ -58,9 +64,9 @@ overlay only where needed, and removes it once every kernel contains the quirk.
 
 | Source | Install path | Purpose |
 |---|---|---|
-| `cs35l56-…-l2u0.bin` / `.wmfw` | `/lib/firmware/cirrus/` | Per-OEM tuning + ROM `3.4.4`→`3.13.4` patch, left amp. **Fallback** for `linux-firmware-cirrus < 20260519`. |
+| `cs35l56-…-l2u0.bin` / `.wmfw` | `/lib/firmware/cirrus/` | Per-OEM tuning + ROM `3.4.4`→`3.13.4` patch, left amp. **Only on `linux-firmware-cirrus < 20260519`** (see below). |
 | `cs35l56-…-l2u1.bin` / `.wmfw` | `/lib/firmware/cirrus/` | Same, right amp. |
-| `52-disable-bt-sco-offload.conf` | `/etc/wireplumber/wireplumber.conf.d/` | Disables the dead `SSP2-BT` offload PCM so its probe stops spamming the log. A2DP/HFP Bluetooth still works via the PipeWire software path. |
+| `52-disable-bt-sco-offload.conf` | `/etc/wireplumber/wireplumber.conf.d/` | Disables the dead `SSP2-BT` offload PCM so its probe stops spamming the log (pre-7.1 kernels; inert on 7.1+). A2DP/HFP Bluetooth still works via the PipeWire software path. |
 | `dkms/asus-expertbook-sof-sdw-3.0.1/` | `/usr/src/asus-expertbook-sof-sdw-3.0.1/` + `/lib/modules/*/updates/dkms/` | Board-scoped compatibility filter, built only for kernels lacking upstream commit `90af3209742d`; install also regenerates initramfs images. |
 
 ### Installed only on `alsa-ucm-conf < 1.2.16` (otherwise the package provides them)
@@ -91,7 +97,10 @@ After reboot, verify:
 
 ```sh
 sudo dmesg | grep cs35l56
-# expect: "Calibration applied", no "FIRMWARE_MISSING", no "Can't read tuning IDs"
+# expect: "Firmware: ... v3.13.4" and "Tuning PID:" for both amps,
+#         no "FIRMWARE_MISSING", no "Can't read tuning IDs".
+# No "Calibration applied": this unit has no CirrusSmartAmpCalibrationData
+# EFI variable, so the kernel skips per-unit calibration silently.
 
 pactl list cards | grep "Active Profile"
 # expect: Active Profile: HiFi
@@ -120,7 +129,7 @@ journalctl -k -b | grep -Ei 'sof|soundwire|cs35|cs42|snd'
 An empty card list together with `SDW3-Playback-SimpleJack`, `-EEXIST`, or
 `sof_sdw ... error -12` in the kernel log is the known phantom-RT722 failure.
 The duplicate SoundWire link aborts the `sof_sdw` probe before firmware, UCM,
-PipeWire, or WirePlumber can participate. Install `audio-fix` 3.1.1 and reboot
+PipeWire, or WirePlumber can participate. Install `audio-fix` 3.2.0 and reboot
 once. Its DKMS module is the packaged compatibility workaround;
 `./patch.sh status audio-fix` verifies the registration and selected module
 path for the running kernel.
@@ -156,12 +165,18 @@ stock kernel driver restored.
 
 ## Known limitations
 
-- **F1 speaker-mute LED stays in its EC default state.** This laptop exposes no
-  speaker-mute LED device to Linux — only `platform::micmute`, which the HiFi
-  UCM *does* drive. There is nothing to bind the speaker-mute key to.
-- **The bundled cs35l56 blobs are a fallback.** On `linux-firmware-cirrus >=
-  20260519` the package already ships the `1043:15e4` tuning, so the bundled
-  copies are redundant (same filenames, same content).
+- **F1 speaker-mute LED stays in its EC default state before Linux 7.4.**
+  `asus-wmi` gains `platform::mute` (WMI device `0x0004001C`, audio-mute
+  trigger) in 7.4. Until then only `platform::micmute` exists, driven by the
+  kernel's `audio-micmute` trigger.
+- **The bundled cs35l56 blobs are a fallback only.** On
+  `linux-firmware-cirrus >= 20260519` the package ships the `1043:15e4` tuning
+  (per-amp `-l2uN.bin` plus the generic Rev 3.13.4 `.wmfw`), byte-identical to
+  the bundled files. Up to 3.1.1 this module installed its uncompressed copies
+  anyway. They shadowed the package, and their per-amp `-l2uN.wmfw` names,
+  which upstream never uses, are looked up before the generic `.wmfw`, so a
+  newer Cirrus firmware would never have loaded. 3.2.0 installs them only on
+  older packages and removes copies identical to the bundled ones.
 
 ## Upstream tracking
 
@@ -172,7 +187,10 @@ Linux 7.3:
   codec dir + `sof-soundwire` `-spk` regex + the speaker confs). ✅
 - **Firmware:** shipped in `linux-firmware-cirrus >= 20260519` for `1043:15e4`. ✅
 - **Ghost RT722:** accepted in Linus' tree as `90af3209742d`, present since
-  7.3-rc1; not in 7.2.y stable as of 7.2.8. ✅
+  7.3-rc1; not in 7.2.y or 6.18.y stable as of 7.2.8 / 6.18.54, because the
+  commit carries no `Cc: stable`. A stable request citing the precedent
+  `6d49beec658f` (the GX651AX ghost quirk, which did reach 7.2.8) is drafted in
+  [`upstream-patches/`](../upstream-patches/). ✅
 
 The module keeps DKMS only for installed kernels that do not contain that DMI
 entry. It also keeps the `52-disable-bt-sco-offload.conf` drop-in until that
