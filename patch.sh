@@ -134,13 +134,15 @@ mod_install_files() {
   done
 }
 
+# Returns 1 when none of the files existed. A file that exists but cannot be
+# removed stops the uninstall (die), so its receipt stays in place.
 mod_remove_files() {
   local entry dst removed=0
   for entry in "${MODULE_FILES[@]}"; do
     dst="${entry#*:}"
-    if [[ -e $dst ]]; then
+    if [[ -e $dst || -L $dst ]]; then
       log "[$MODULE_NAME] removing $dst"
-      rm -- "$dst"
+      rm -- "$dst" || die "[$MODULE_NAME] cannot remove $dst"
       removed=1
     else
       log "[$MODULE_NAME] not present: $dst"
