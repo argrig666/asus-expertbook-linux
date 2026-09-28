@@ -36,6 +36,7 @@ TP_QUIRKS=/etc/libinput/local-overrides.quirks
 TP_QUIRK_SRC=99-asus-expertbook-pixart-4f05.quirks
 TP_BEGIN="# >>> asus-expertbook-linux touchpad-fix >>>"
 TP_END="# <<< asus-expertbook-linux touchpad-fix <<<"
+TP_LOCK=/run/asus-expertbook-touchpad-fix.lock
 
 # Print file $1 without our managed block and without earlier B9406 touchpad
 # sections. Key lines of a stale section are dropped up to the next [header],
@@ -78,7 +79,8 @@ _tp_markers_ok() {
 # file with no section at all) makes libinput drop every quirk on the machine.
 _tp_validate() {
   local dir rc=0
-  command -v libinput >/dev/null 2>&1 || return 0
+  libinput quirks --help >/dev/null 2>&1 ||
+    die "[touchpad-fix] 'libinput quirks' is needed to check $TP_QUIRKS before replacing it (Arch: libinput; Debian/Ubuntu: libinput-tools)"
   dir="$(mktemp -d)" || return 1
   if ! cp -- "$1" "$dir/local-overrides.quirks" ||
      ! libinput quirks validate --data-dir "$dir"; then
@@ -117,13 +119,23 @@ _tp_rest() {
   _tp_strip "$TP_QUIRKS"
 }
 
+# Hold the lock for the whole read, validate, back up and replace cycle, so a
+# second run of this module cannot lose the first one's edit. It is released
+# when the module's subshell exits.
+_tp_lock() {
+  exec {TP_LOCK_FD}>"$TP_LOCK" || die "[touchpad-fix] cannot open $TP_LOCK"
+  flock -w 30 "$TP_LOCK_FD" || die "[touchpad-fix] another run holds $TP_LOCK"
+}
+
 _tp_install_quirk() {
-  local rest="" block
+  local rest="" src block
+  src="$(cat -- "$TP_QUIRK_SRC")" || die "[touchpad-fix] cannot read $TP_QUIRK_SRC"
+  grep -q '^\[' <<<"$src" || die "[touchpad-fix] $TP_QUIRK_SRC holds no quirk section"
+  _tp_lock
   if [[ -f $TP_QUIRKS ]]; then
     rest="$(_tp_rest)" || exit 1
   fi
-  block="$(printf '%s\n' "$TP_BEGIN"; cat "$TP_QUIRK_SRC"; printf '%s' "$TP_END")" ||
-    die "[touchpad-fix] cannot read $TP_QUIRK_SRC"
+  block="$TP_BEGIN"$'\n'"$src"$'\n'"$TP_END"
   if _tp_has_content "$rest"; then
     _tp_write "$rest"$'\n\n'"$block" || die "[touchpad-fix] cannot write $TP_QUIRKS"
   else
@@ -135,6 +147,7 @@ _tp_install_quirk() {
 _tp_remove_quirk() {
   local rest
   [[ -f $TP_QUIRKS ]] || return 0
+  _tp_lock
   rest="$(_tp_rest)" || exit 1
   if _tp_has_content "$rest"; then
     _tp_write "$rest" || die "[touchpad-fix] cannot write $TP_QUIRKS"

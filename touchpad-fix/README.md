@@ -28,8 +28,11 @@ touchpad sections (the 1.1.x copy and Omarchy-derived ones) and keeps every
 other section; uninstall removes only the block. The rewritten file must pass
 `libinput quirks validate` before it replaces the old one, which is kept as
 `local-overrides.quirks.asus-expertbook-linux.bak`; a broken file would make
-libinput drop every quirk on the machine. If the begin/end markers do not pair
-up (edited by hand), install and uninstall stop without touching the file.
+libinput drop every quirk on the machine, so the `libinput quirks` tool
+(part of `libinput` on Arch, `libinput-tools` on Debian/Ubuntu) is required. If
+the begin/end markers do not pair up (edited by hand), install and uninstall
+stop without touching the file. A lock keeps two runs from overwriting each
+other's edit.
 
 The libinput quirk is the load-bearing fix and is sufficient on its own
 (verified on the reference machine: the hwdb clamp is **not** installed, the
