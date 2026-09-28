@@ -101,6 +101,7 @@ UCM_FILES=(
 # firmware package installs is taken as the signal.
 cirrus_firmware_is_upstream() {
   local v pkg
+  cirrus_upstream_files_present || return 1
   if command -v pacman >/dev/null 2>&1; then
     for pkg in linux-firmware-cirrus linux-firmware; do
       v="$(pacman -Q "$pkg" 2>/dev/null | awk '{print $2}')" || true
@@ -112,8 +113,26 @@ cirrus_firmware_is_upstream() {
     done
     return 1
   fi
-  local f=/lib/firmware/cirrus/cs35l56-b0-dsp1-misc-104315e4-l2u0.bin
-  [[ -e $f.zst || -e $f.xz ]]
+  return 0
+}
+
+# The package's replacements for the bundled files: per-amp tuning and the
+# generic .wmfw, compressed or not (an uncompressed copy only counts when a
+# package owns it, so our own leftovers never vouch for themselves).
+cirrus_upstream_files_present() {
+  local base f found
+  for base in cs35l56-b0-dsp1-misc-104315e4-l2u0.bin cs35l56-b0-dsp1-misc-104315e4-l2u1.bin \
+              cs35l56-b0-dsp1-misc-104315e4.wmfw; do
+    f="/lib/firmware/cirrus/$base"
+    found=0
+    if [[ -e $f.zst || -e $f.xz ]]; then
+      found=1
+    elif [[ -e $f ]] && command -v pacman >/dev/null 2>&1 && pacman -Qqo "$f" >/dev/null 2>&1; then
+      found=1
+    fi
+    (( found )) || return 1
+  done
+  return 0
 }
 
 audio_install_firmware() {
@@ -128,17 +147,55 @@ audio_install_firmware() {
 # Remove only copies that are byte-identical to the bundled files, so a
 # firmware the user placed deliberately is never deleted.
 audio_remove_bundled_firmware() {
-  local entry src dst
+  local entry src dst removed=1
   for entry in "${FIRMWARE_FILES[@]}"; do
     src="${entry%%:*}"; dst="${entry#*:}"
     [[ -f $dst ]] || continue
-    if cmp -s "$src" "$dst"; then
+    if command -v pacman >/dev/null 2>&1 && pacman -Qqo "$dst" >/dev/null 2>&1; then
+      warn "[audio-fix] leaving $dst: it belongs to a package"
+    elif cmp -s "$src" "$dst"; then
       rm -f -- "$dst"
       log "[audio-fix] removed bundled copy $dst"
+      removed=0
     else
       warn "[audio-fix] leaving $dst: it differs from the bundled file"
     fi
   done
+  return "$removed"
+}
+
+# Remove only our token from NoExtract lines, keeping every other entry and
+# any trailing comment. The original is kept as pacman.conf.asus-expertbook-linux.bak.
+audio_drop_noextract_pin() {
+  local tok="usr/share/alsa/ucm2/sof-soundwire/sof-soundwire.conf" conf=/etc/pacman.conf tmp
+  awk -v tok="$tok" '/^[[:space:]]*NoExtract[[:space:]]*=/ && index($0, tok) { f = 1 }
+    END { exit !f }' "$conf" 2>/dev/null || return 0
+  cp -a -- "$conf" "$conf.asus-expertbook-linux.bak" || return 1
+  tmp="$(mktemp "${conf%/*}/.pacman.conf.XXXXXX")" || return 1
+  if ! awk -v tok="$tok" '
+      /^[[:space:]]*NoExtract[[:space:]]*=/ {
+        rest = $0; comment = ""
+        sub(/^[[:space:]]*NoExtract[[:space:]]*=[[:space:]]*/, "", rest)
+        if (match(rest, /#/)) { comment = substr(rest, RSTART); rest = substr(rest, 1, RSTART - 1) }
+        n = split(rest, word, /[[:space:]]+/)
+        out = ""; hit = 0
+        for (i = 1; i <= n; i++) {
+          if (word[i] == tok) { hit = 1; continue }
+          if (word[i] != "") out = out (out == "" ? "" : " ") word[i]
+        }
+        if (hit) {
+          if (out != "") print "NoExtract = " out (comment != "" ? " " comment : "")
+          else if (comment != "") print comment
+          next
+        }
+      }
+      { print }' "$conf" >"$tmp" ||
+     ! chmod --reference="$conf" "$tmp" || ! mv -f -- "$tmp" "$conf"; then
+    rm -f -- "$tmp"
+    warn "[audio-fix] could not edit $conf; remove $tok from its NoExtract line by hand"
+    return 1
+  fi
+  log "[audio-fix] removed the sof-soundwire.conf NoExtract pin from $conf (backup: $conf.asus-expertbook-linux.bak)"
 }
 
 # SOF DSP firmware and topologies are a separate Arch package (#23).
@@ -284,14 +341,22 @@ audio_install_dkms() {
     audio_require_build_tools
   fi
 
+  # Re-running install with the same, unchanged overlay keeps every working
+  # build and only builds kernels that lack one. Removing and rebuilding all
+  # of them would leave the machine without audio if one rebuild failed.
+  local keep=0
   if command -v dkms >/dev/null 2>&1 && \
      [[ -n $(dkms status -m "$AUDIO_DKMS_NAME" -v "$AUDIO_DKMS_VERSION" \
        2>/dev/null || true) ]]; then
-    log "[audio-fix] refreshing existing DKMS registration"
-    dkms remove -m "$AUDIO_DKMS_NAME" -v "$AUDIO_DKMS_VERSION" --all
+    if diff -rq "$AUDIO_DKMS_SOURCE" "$AUDIO_DKMS_TARGET" >/dev/null 2>&1; then
+      keep=1
+    else
+      log "[audio-fix] refreshing the changed DKMS registration"
+      dkms remove -m "$AUDIO_DKMS_NAME" -v "$AUDIO_DKMS_VERSION" --all
+    fi
   fi
 
-  rm -rf -- "$AUDIO_DKMS_TARGET"
+  (( keep )) || rm -rf -- "$AUDIO_DKMS_TARGET"
 
   for kernel_dir in /usr/lib/modules/*; do
     [[ -d $kernel_dir ]] || continue
@@ -310,6 +375,10 @@ audio_install_dkms() {
   done
 
   if (( needed == 0 )); then
+    if (( keep )); then
+      dkms remove -m "$AUDIO_DKMS_NAME" -v "$AUDIO_DKMS_VERSION" --all
+      rm -rf -- "$AUDIO_DKMS_TARGET"
+    fi
     log "[audio-fix] every installed kernel contains the upstream DMI quirk; removed redundant DKMS overlay"
     audio_refresh_initramfs "with the stock upstream SoundWire quirk"
     return
@@ -319,23 +388,45 @@ audio_install_dkms() {
     die "[audio-fix] kernels need the ghost-RT722 overlay, but no matching headers were found"
 
   audio_require_build_tools
-  install -d -m 0755 "$AUDIO_DKMS_TARGET"
-  cp -a -- "$AUDIO_DKMS_SOURCE/." "$AUDIO_DKMS_TARGET/"
-  dkms add -m "$AUDIO_DKMS_NAME" -v "$AUDIO_DKMS_VERSION"
+  if (( ! keep )); then
+    install -d -m 0755 "$AUDIO_DKMS_TARGET"
+    cp -a -- "$AUDIO_DKMS_SOURCE/." "$AUDIO_DKMS_TARGET/"
+    dkms add -m "$AUDIO_DKMS_NAME" -v "$AUDIO_DKMS_VERSION"
+  fi
 
+  # One kernel failing to build must not stop the others: build what builds,
+  # refresh the images, then fail loudly so the version is not recorded.
+  local built=0 failed=()
   for kernel in "${build_kernels[@]}"; do
+    if (( keep )) && dkms status -m "$AUDIO_DKMS_NAME" -v "$AUDIO_DKMS_VERSION" -k "$kernel" \
+         2>/dev/null | grep -q ': installed'; then
+      log "[audio-fix] DKMS overlay already installed for $kernel"
+      installed=$(( installed + 1 ))
+      continue
+    fi
     log "[audio-fix] building DKMS overlay for $kernel"
-    dkms install -m "$AUDIO_DKMS_NAME" -v "$AUDIO_DKMS_VERSION" -k "$kernel"
-    installed=$(( installed + 1 ))
+    if dkms install -m "$AUDIO_DKMS_NAME" -v "$AUDIO_DKMS_VERSION" -k "$kernel"; then
+      installed=$(( installed + 1 ))
+      built=1
+    else
+      warn "[audio-fix] the DKMS overlay failed to build for $kernel"
+      failed+=("$kernel")
+    fi
   done
 
+  if (( built )); then
+    audio_refresh_initramfs "with the DKMS overlay"
+  fi
+  (( ${#failed[@]} == 0 )) || \
+    die "[audio-fix] no ghost-RT722 overlay for: ${failed[*]} (see 'dkms status' and the make.log under /var/lib/dkms/$AUDIO_DKMS_NAME)"
   (( installed > 0 )) || die "[audio-fix] no kernel with matching headers was found"
-
-  audio_refresh_initramfs "with the DKMS overlay"
 }
+
+AUDIO_INITRAMFS_REFRESHED=0
 
 audio_refresh_initramfs() {
   local reason="${1:-after the audio driver change}"
+  AUDIO_INITRAMFS_REFRESHED=1
   # sof_sdw may be included in an autodetected initramfs. Rebuild it now so the
   # selected stock/DKMS copy is consistent at the next boot.
   if command -v limine-mkinitcpio >/dev/null 2>&1; then
@@ -359,14 +450,21 @@ audio_remove_dkms() {
 }
 
 module_post_install() {
+  local fw_changed=0
   audio_require_sof_firmware
-  audio_install_dkms
 
+  # Firmware first: an initramfs rebuilt afterwards must not keep stale copies.
   if cirrus_firmware_is_upstream; then
     log "[audio-fix] linux-firmware ships the 1043:15e4 CS35L56 tuning -- not installing bundled firmware."
-    audio_remove_bundled_firmware
+    audio_remove_bundled_firmware && fw_changed=1
   else
     audio_install_firmware
+    fw_changed=1
+  fi
+
+  audio_install_dkms
+  if (( fw_changed && ! AUDIO_INITRAMFS_REFRESHED )); then
+    audio_refresh_initramfs "after the speaker firmware change"
   fi
 
   if ucm_hifi_is_upstream; then
@@ -374,10 +472,7 @@ module_post_install() {
     log "[audio-fix] alsa-ucm-conf ${v} ships the cs35l56+cs42l43-spk HiFi UCM upstream -- not installing bundled UCM (firmware-only)."
     # If an older version of this module pinned sof-soundwire.conf via NoExtract,
     # drop the pin so the packaged file tracks future upgrades normally.
-    if grep -q "ucm2/sof-soundwire/sof-soundwire.conf" /etc/pacman.conf 2>/dev/null; then
-      sed -i '\#ucm2/sof-soundwire/sof-soundwire.conf#d' /etc/pacman.conf
-      log "[audio-fix] removed obsolete sof-soundwire.conf NoExtract pin from /etc/pacman.conf"
-    fi
+    audio_drop_noextract_pin
   else
     # alsa-ucm-conf < 1.2.16 (or non-Arch): install the upstream-master UCM files
     # so the combined speaker codec resolves to a real HiFi profile.
@@ -404,7 +499,7 @@ module_post_install() {
 
 module_post_uninstall() {
   audio_remove_dkms
-  audio_remove_bundled_firmware
+  audio_remove_bundled_firmware || true
 
   # Only tear down UCM files we placed ourselves. When alsa-ucm-conf >= 1.2.16
   # owns them, leave them be -- removing package files would break audio and
@@ -416,7 +511,7 @@ module_post_uninstall() {
       rm -f -- "$dst"
     done
     rm -f /usr/share/alsa/ucm2/codecs/cs35l56+cs42l43-spk
-    sed -i '\#ucm2/sof-soundwire/sof-soundwire.conf#d' /etc/pacman.conf 2>/dev/null || true
+    audio_drop_noextract_pin || true
     echo "Reboot to revert. Speakers go silent again until upstream alsa-ucm-conf"
     echo "ships the cs35l56+cs42l43-spk UCM (>= 1.2.16)."
   else
