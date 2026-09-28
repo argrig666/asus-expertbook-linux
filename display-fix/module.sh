@@ -163,7 +163,8 @@ module_status_extra() {
   elif [[ $sel_fetch == 0 ]]; then
     printf '  self-refresh:%s xe.enable_psr2_sel_fetch=0 without xe.enable_panel_replay=0: Panel Replay without selective update freezes the panel at boot%s\n' \
       "$c_warn" "$c_off"
-  elif [[ -f $staged ]]; then
+  elif grep -qs 'xe\.enable_panel_replay=0' "$staged" && \
+       grep -qs 'xe\.enable_psr=1' "$staged"; then
     printf '  self-refresh:%s PSR1 staged, reboot to apply (this boot runs the Panel Replay default)%s\n' \
       "$c_warn" "$c_off"
   else
