@@ -58,7 +58,7 @@ different distro, the modules themselves still apply — only the
 | **Samsung Display Corp** eDP panel + Intel **`xe`** driver (Xe3 Panther Lake iGPU) | **Linux 7.2's Panel Replay default misbehaves on this panel:** PSR idle timeouts with on-screen corruption, flicker, VRR smearing, stale frames, and HDR washed out after every HDR modeset. Brightness can also change in sysfs without changing panel luminance. | Self-refresh pinned to PSR1: owners report no flicker, stale frames or VRR smearing, and HDR stays vivid across toggles; forced VESA DPCD backlight makes KDE/sysfs brightness work. | [`display-fix`](display-fix/) |
 | **Samsung OLED HDR** (EDID HDR metadata inside DisplayID 2.0) | **KDE offers no HDR toggle.** libdisplay-info 0.3.0 never looks inside the DisplayID 2.0 extension where this panel declares PQ, 1600 cd/m² and BT.2020, so KWin sees an SDR panel. | *(optional)* The upstream commits that read DisplayID 2.0 CTA blocks, backported onto 0.3.0 with two parser fixes of our own and the `.so.3` ABI intact, preferred through `ld.so.conf.d`; HDR appears in Display & Monitor. A pacman hook retires it whenever the distro's package changes. | [`hdr-fix`](hdr-fix/) |
 | **Intel Core Ultra X7/X9** Panther Lake hybrid (P + E + LP-E cores) | **No userspace thermal policy:** the OEM's adaptive thermal tables (PL1/PL2 limits, passive trips) are not applied; only the kernel's int340x sensors and limits are exposed. | `thermald` runs the OEM tables in adaptive mode. `intel-lpmd` is opt-in: on Panther Lake it showed no significant idle gain and slowed app launches. | [`intel-perf-fix`](intel-perf-fix/) |
-| **Platform profiles** (Intel SoC Power Slider + asus-wmi) | **Power Save only reaches `balanced`.** The legacy profile file lists only the choices both handlers share, so the SoC slider never goes low-power and the fans never go quiet. | Power Save sets the SoC slider to `low-power` and asus-wmi to `quiet`; Balanced and Performance map one-to-one. power-profiles-daemon stays in charge. | [`power-profile-bridge`](power-profile-bridge/) |
+| **Platform profiles** (Intel SoC Power Slider + asus-wmi) | **Power Save only reaches `balanced`**, and from Performance it snaps back to Balanced. The legacy profile file lists only the choices both handlers share, so the SoC slider never goes low-power and the fans never go quiet. | Power Save sets the SoC slider to `low-power` and asus-wmi to `quiet` and stays there; Balanced and Performance map one-to-one. power-profiles-daemon stays in charge of the profile and CPU EPP. | [`power-profile-bridge`](power-profile-bridge/) |
 | **USB UVC webcam** (+ idle Panther Lake NPU) | **No AI camera effects.** Windows Studio Effects (background blur, smart framing) doesn't exist on Linux out of the box. | **CPU** background blur via OBS + `obs-backgroundremoval`, exposed as a virtual camera ("AI Camera"). *(NPU offload is not available in the OBS plugin on Linux — see the module's reality-check note.)* | [`webcam-ai-fix`](webcam-ai-fix/) |
 | **Shinetech USB camera + UEFI ESRT target** | ASUS camera firmware 3009 is distributed as a Windows EXE. | Compares locally against the fixed, verified 3009 baseline; offers a confirmed `fwupd` capsule update without running Windows or querying ASUS for newer versions. | [`camera-firmware`](camera-firmware/) |
 | **Intel Sensor Hub** (`8086:e445`, carries the ambient light sensor) | **No ambient light sensor at all.** The kernel's generic `ish_ptl.bin` is rejected (`ISH loader: cmd 2 failed 10`); linux-firmware has no ASUS image, so `/sys/bus/iio` never gets an `als` device. | The ASUS-signed image from ASUS's own Sensor Hub driver package is verified and installed under the per-OEM name the kernel requests; `iio:device1 = als` appears and `keyboard-backlight-auto` has a sensor to read. | [`ish-firmware`](ish-firmware/) |
@@ -760,9 +760,13 @@ Panther Lake registers two platform-profile handlers here, Intel's
 that power-profiles-daemon drives lists only the choices both share, so its
 Power Save writes `balanced`: the slider never reaches `low-power` and the fans
 never reach `quiet` ([asusctl#387](https://github.com/OpenGamingCollective/asusctl/issues/387)).
-A small root service follows power-profiles-daemon's `ActiveProfile` over D-Bus
-and writes each handler's own `/sys/class/platform-profile/*/profile`; the
-legacy file then reads `custom`, which power-profiles-daemon ignores. Details in
+Going from Performance straight to Power Save is worse: power-profiles-daemon
+writes `balanced` to emulate power-saver, then reads its own write back and
+switches itself to Balanced. A small root service follows the daemon's
+`ActiveProfile` over D-Bus and writes each handler's own
+`/sys/class/platform-profile/*/profile`, and a drop-in starts the daemon with
+`--block-driver=platform_profile`, so it keeps CPU EPP and the bridge alone
+writes platform profiles. Details in
 [`power-profile-bridge/README.md`](power-profile-bridge/README.md).
 
 ### 12. [`touchpad-haptics`](touchpad-haptics/) — *(optional)* click force and haptic strength

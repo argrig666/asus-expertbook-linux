@@ -604,16 +604,18 @@ Result: install-all is appropriate for this hardware.</code></pre>
         <div class="ba-row">
           <div class="ba-cell ba-bad">
             <strong>Before — Power Save</strong>
-            Power Save only reaches <code>balanced</code>. The legacy profile
-            file lists only the choices both handlers share, so the SoC slider
+            Power Save only reaches <code>balanced</code>, and from
+            Performance it snaps back to Balanced. The legacy profile file
+            lists only the choices both handlers share, so the SoC slider
             never goes low-power and the fans never go quiet.
           </div>
           <div class="ba-arrow">→</div>
           <div class="ba-cell ba-good">
             <strong>After — <code>power-profile-bridge</code></strong>
             Power Save sets the SoC slider to <code>low-power</code> and
-            asus-wmi to <code>quiet</code>; Balanced and Performance map
-            one-to-one. power-profiles-daemon stays in charge.
+            asus-wmi to <code>quiet</code> and stays there; Balanced and
+            Performance map one-to-one. power-profiles-daemon stays in charge
+            of the profile and CPU EPP.
           </div>
         </div>
       </div>
@@ -1265,19 +1267,31 @@ balanced performance</code></pre>
           </tbody>
         </table>
         <p>
+          Going from Performance straight to Power Save is worse: the profile
+          snaps back to Balanced within a second. power-profiles-daemon
+          emulates power-saver by writing <code>balanced</code>, blocks its
+          file-monitor handler only while it writes, then receives the event
+          for its own write and takes it as a switch to balanced (0.30 and
+          main;
+          <a href="https://gitlab.freedesktop.org/upower/power-profiles-daemon/-/issues/187">power-profiles-daemon#187</a>
+          was closed by a fix for hp-wmi's <code>cool</code> choice only).
+        </p>
+        <p>
           power-profiles-daemon keeps managing the CPU energy-performance
-          preference and stays the only thing KDE talks to. When the handlers
-          disagree the legacy file reads <code>custom</code>, which
-          power-profiles-daemon 0.30 ignores, so the two never fight. The
-          bridge sets every profile and re-applies after resume and when it
-          starts; stopping it puts both handlers back on <code>balanced</code>
-          if they were left disagreeing. A single
+          preference and stays the only thing KDE talks to, but a drop-in
+          starts it with <code>--block-driver=platform_profile</code>, so the
+          bridge alone writes platform profiles and nothing snaps back. The
+          module restores your profile after restarting the daemon. The bridge
+          sets every profile and re-applies after resume and whenever the
+          daemon (re)appears on the bus; stopping it puts both handlers back
+          on <code>balanced</code> if they were left disagreeing. A single
           handler can be overridden in <code>/etc/power-profile-bridge.conf</code>
           (for example <code>power-saver.asus-wmi=balanced</code>).
         </p>
         <p><strong>Files installed:</strong></p>
         <ul>
           <li><code>/usr/local/bin/power-profile-bridge</code> and <code>/etc/systemd/system/power-profile-bridge.service</code> — the bridge and its root service</li>
+          <li><code>/etc/systemd/system/power-profiles-daemon.service.d/50-asus-expertbook-power-profile-bridge.conf</code> — turns off the daemon's <code>platform_profile</code> driver; removed on uninstall</li>
           <li><code>/etc/power-profile-bridge.conf</code> — per-handler overrides, seeded from <code>/usr/share/power-profile-bridge/</code> and left in place on uninstall</li>
         </ul>
         <pre class="term"><code>$ power-profile-bridge --status        # changes nothing
@@ -1286,9 +1300,11 @@ legacy platform_profile: custom
 SoC Power Slider: low-power (choices: low-power balanced performance; wants low-power)
 asus-wmi: quiet (choices: quiet balanced performance; wants quiet)</code></pre>
         <p>
-          It needs power-profiles-daemon (KDE's default); with TLP or tuned
-          there is no <code>ActiveProfile</code> to follow and the service only
-          applies the current profile at start. The xe GPU's own
+          It needs power-profiles-daemon (KDE's default) or another owner of
+          <code>org.freedesktop.UPower.PowerProfiles</code>; with TLP there is
+          no <code>ActiveProfile</code> to follow and the service does nothing.
+          Hotkeys that change the platform profile behind the daemon's back
+          no longer show in the applet. The xe GPU's own
           <code>power_profile</code> is left untouched. See
           <a href="https://github.com/burakgon/asus-expertbook-linux/blob/main/power-profile-bridge/README.md"><code>power-profile-bridge/README.md</code></a>.
         </p>

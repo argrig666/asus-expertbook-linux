@@ -27,6 +27,17 @@ intersection is tracked in
 [asusctl#387](https://github.com/OpenGamingCollective/asusctl/issues/387); no
 kernel change is pending.
 
+It gets worse when you go from **performance** straight to **power-saver**:
+the profile snaps back to **balanced** within a second, with nothing else
+installed. power-profiles-daemon emulates power-saver by writing `balanced`,
+blocks its file-monitor handler only while it writes, and then receives the
+change event for its own write and takes it as a switch to balanced
+(`ppd-driver-platform-profile.c`, the same in 0.30 and on main). Going from
+balanced to power-saver works only because nothing is written.
+[power-profiles-daemon#187](https://gitlab.freedesktop.org/upower/power-profiles-daemon/-/issues/187)
+reported the same symptom and was closed by a fix for hp-wmi's `cool` choice,
+which does not cover this case.
+
 ## What the module does
 
 A small root service, `power-profile-bridge`, follows power-profiles-daemon's
@@ -39,13 +50,22 @@ A small root service, `power-profile-bridge`, follows power-profiles-daemon's
 | balanced | `balanced` | `balanced` |
 | performance | `performance` | `performance` |
 
-power-profiles-daemon keeps managing the CPU energy-performance preference and
-stays the only thing KDE talks to. When the handlers disagree the legacy file
-reads `custom`, which power-profiles-daemon 0.30 ignores, so the two never
-fight. Because it can also skip a write it believes is already applied, the
-bridge sets every profile, not only power-saver, re-applies after resume and
-when it starts. Stopping the service puts both handlers back on `balanced` if
-they were left disagreeing.
+power-profiles-daemon keeps managing the CPU energy-performance preference
+(its `intel_pstate` driver) and stays the only thing KDE talks to. Its
+`platform_profile` driver is switched off with a drop-in,
+`/etc/systemd/system/power-profiles-daemon.service.d/50-asus-expertbook-power-profile-bridge.conf`
+(`--block-driver=platform_profile`), so the bridge is the only thing writing
+platform profiles and nothing snaps back. `powerprofilesctl list` then shows
+`PlatformDriver: placeholder`. The daemon does not restore its saved profile
+the first time its drivers change, so the module puts your current profile
+back after restarting it.
+
+The bridge sets every profile, not only power-saver, and re-applies after
+resume and whenever power-profiles-daemon (re)appears on the bus. Stopping the
+service puts both handlers back on `balanced` if they were left disagreeing.
+With a power-profiles-daemon too old for `--block-driver`, the module warns
+and installs the bridge alone: power-saver then works when reached from
+balanced, not straight from performance.
 
 The mapping is generic: for each handler, power-saver picks `low-power`, then
 `quiet`, `cool`, `balanced`; performance picks `performance`, then
@@ -78,14 +98,18 @@ asus-wmi: quiet (choices: quiet balanced performance; wants quiet)
 ./patch.sh uninstall power-profile-bridge
 ```
 
-The service stops, the handlers go back to agreeing, and power-profiles-daemon
-is on its own again. `/etc/power-profile-bridge.conf` is left in place.
+The service stops, the handlers go back to agreeing, the drop-in is removed
+and power-profiles-daemon restarts with its `platform_profile` driver, keeping
+your current profile. `/etc/power-profile-bridge.conf` is left in place.
 
 ## Scope
 
-- Needs power-profiles-daemon (KDE's default). With TLP or tuned instead,
-  there is no `ActiveProfile` to follow and the service only applies the
-  current profile at start.
+- Needs power-profiles-daemon (KDE's default), or anything else that owns
+  `org.freedesktop.UPower.PowerProfiles`. With TLP instead there is no
+  `ActiveProfile` to follow and the service does nothing.
+- Hotkeys or tools that change the platform profile behind the daemon's back
+  are no longer reflected in the KDE applet, because the daemon's platform
+  driver is off.
 - It changes only platform-profile handlers. The xe GPU's own
   `power_profile` (`base` / `power_saving`) is untouched: there are no
   measurements yet of what it costs or saves.

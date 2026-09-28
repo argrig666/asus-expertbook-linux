@@ -10,11 +10,14 @@
 # never reach quiet. This daemon follows ActiveProfile over D-Bus and writes
 # each handler's own /sys/class/platform-profile/*/profile.
 #
-# When the handlers disagree the legacy file reads "custom";
-# power-profiles-daemon ignores that value, so the two do not fight. It can
-# also skip writing a profile it believes is already set, which is why every
-# profile is applied here, not only power-saver. Handlers are re-applied after
-# resume and when the daemon starts.
+# The module also starts power-profiles-daemon with
+# --block-driver=platform_profile: its own driver emulates power-saver by
+# writing "balanced" to the legacy file and then reads that write back as a
+# switch to balanced. Without that drop-in the daemon still ignores the
+# "custom" the legacy file shows while the handlers disagree, but it may skip
+# a write it believes is already applied, so every profile is applied here,
+# not only power-saver. Handlers are re-applied after resume and whenever the
+# daemon (re)appears on the bus.
 #
 # Usage: power-profile-bridge            run (systemd service)
 #        power-profile-bridge --status   print the mapping, touch nothing
@@ -92,6 +95,21 @@ active_profile() {
     sed -n 's/^s "\(.*\)"$/\1/p'
 }
 
+# Apply what power-profiles-daemon reports now, giving it a few seconds when
+# it has only just started.
+apply_active() {
+  local prof tries=5
+  while (( tries-- > 0 )); do
+    prof=$(active_profile)
+    if [[ -n $prof ]]; then
+      apply "$prof"
+      return 0
+    fi
+    sleep 1
+  done
+  log "power-profiles-daemon did not report its active profile"
+}
+
 status() {
   local prof dir
   prof=$(active_profile)
@@ -110,11 +128,15 @@ case ${1:-} in
   *)        echo "usage: $0 [--status | --apply PROFILE]" >&2; exit 2 ;;
 esac
 
-apply "$(active_profile)"
-
 # One stream for both sources: profile changes from power-profiles-daemon and
 # logind's PrepareForSleep(false) after resume. If either monitor exits, the
 # service ends and systemd restarts it.
+#
+# The profile is read only once gdbus reports that the daemon's name has an
+# owner. gdbus asks for the owner after subscribing to the signals, and the bus
+# answers in order, so a switch made at any point after that read still
+# arrives as a signal. The same line comes back whenever power-profiles-daemon
+# restarts, which re-applies its profile then too.
 {
   gdbus monitor --system --dest "$BUS" --object-path "$OBJ" &
   gdbus monitor --system --dest org.freedesktop.login1 --object-path /org/freedesktop/login1 &
@@ -123,12 +145,15 @@ apply "$(active_profile)"
   kill $(jobs -p)
 } 2>/dev/null | while IFS= read -r line; do
   case $line in
+    "The name $BUS is owned by "*)
+      apply_active
+      ;;
     *"'ActiveProfile': <'"*)
       prof=${line#*"'ActiveProfile': <'"}
       apply "${prof%%\'*}"
       ;;
     *"PrepareForSleep (false"*)
-      apply "$(active_profile)"
+      apply_active
       ;;
   esac
 done
