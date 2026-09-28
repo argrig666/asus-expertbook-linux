@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Simon Ser <contact@emersion.fr>
 Date: Thu, 9 Oct 2025 17:38:23 +0200
-Subject: [PATCH 2/7] cta: introduce struct di_cta
+Subject: [PATCH 02/12] cta: introduce struct di_cta
 
 In the next commit, CTA parsing functions will be re-used for
 DisplayID v2. However, DisplayID v2 doesn't embed a full EDID-style

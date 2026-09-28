@@ -1,0 +1,27 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Sebastian Wick <sebastian.wick@redhat.com>
+Date: Tue, 6 Jan 2026 14:03:04 +0100
+Subject: [PATCH 11/12] cta: Initialize speaker location coordinates to zero
+
+Another field indicates if the coordinates are set, but we should not
+leave them uninitialized either way.
+
+Fixes: 75b2167 ("cta: add support for Speaker Location data blocks")
+Signed-off-by: Sebastian Wick <sebastian.wick@redhat.com>
+(cherry picked from commit 76f133ae1a30848bd5394fb8d6907a81ba0611e3)
+---
+ cta.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/cta.c b/cta.c
+index f063c9d..b78d898 100644
+--- a/cta.c
++++ b/cta.c
+@@ -1908,6 +1908,7 @@ parse_speaker_location_block(struct di_cta *cta,
+ 
+ 	while (size >= 2) {
+ 		speaker_loc.has_coords = has_bit(data[0], 6);
++		speaker_loc.x = speaker_loc.y = speaker_loc.z = 0;
+ 		speaker_loc.is_active = has_bit(data[0], 5);
+ 		speaker_loc.channel_index = get_bit_range(data[0], 4, 0);
+ 		speaker_loc.speaker_id = get_bit_range(data[1], 4, 0);

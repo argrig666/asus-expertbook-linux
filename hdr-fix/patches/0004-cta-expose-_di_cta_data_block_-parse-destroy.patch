@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Simon Ser <contact@emersion.fr>
 Date: Thu, 9 Oct 2025 18:43:36 +0200
-Subject: [PATCH 4/7] cta: expose _di_cta_data_block_{parse,destroy}
+Subject: [PATCH 04/12] cta: expose _di_cta_data_block_{parse,destroy}
 
 These will be re-used for DisplayID v2.
 

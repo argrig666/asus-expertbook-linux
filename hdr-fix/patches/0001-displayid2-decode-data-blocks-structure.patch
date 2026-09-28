@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Simon Ser <contact@emersion.fr>
 Date: Fri, 25 Jul 2025 15:13:00 +0200
-Subject: [PATCH 1/7] displayid2: decode data blocks structure
+Subject: [PATCH 01/12] displayid2: decode data blocks structure
 
 Parse data blocks length and tags, expose these in the public API.
 

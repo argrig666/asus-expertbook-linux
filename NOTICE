@@ -18,8 +18,10 @@ files. They are NOT covered by this repository's MIT license.
     linux-firmware, renamed into the per-OEM filename pattern the
     cs35l56 driver looks for. Same file, two filenames.
 
-The patches in hdr-fix/patches/ are upstream libdisplay-info commits
-(https://gitlab.freedesktop.org/emersion/libdisplay-info), MIT licensed,
-backported unchanged onto the 0.3.0 release apart from dropping two test-data
-files that 0.3.0 does not contain. Upstream commits: 788c056, d535192, 34b3635,
-4713505, 7324cca, 73ab82d, 73ec53d.
+The patches in hdr-fix/patches/ apply to the libdisplay-info 0.3.0 release
+(https://gitlab.freedesktop.org/emersion/libdisplay-info, MIT licensed).
+0001-0007 and 0010-0012 are upstream commits (788c056, d535192, 34b3635,
+4713505, 7324cca, 73ab82d, 73ec53d, 8057b29, 76f133a, and cb5e3ed ported to the
+0.3.0 layout), backported unchanged apart from dropping two test-data files
+that 0.3.0 does not contain. 0008-0009 are fixes written for this repository
+and offered upstream under the same MIT license.

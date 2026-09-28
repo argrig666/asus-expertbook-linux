@@ -1,0 +1,39 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Leandro Ribeiro <leandro.ribeiro@collabora.com>
+Date: Thu, 20 Nov 2025 20:13:41 -0300
+Subject: [PATCH 10/12] edid: fix potential overflow in shift operation
+
+This issue was caught by CI on the Clang build.
+
+Shifting uint8_t/uint16_t without explicit casting to uint32_t may
+cause overflow depending on the implicit promotion rule. Explicitly cast
+to uint32_t before shifting to avoid this.
+
+Signed-off-by: Leandro Ribeiro <leandro.ribeiro@collabora.com>
+(cherry picked from commit 8057b299308828aeefb97076b1b0a0649f8fcae5)
+---
+ edid.c | 11 ++++++-----
+ 1 file changed, 6 insertions(+), 5 deletions(-)
+
+diff --git a/edid.c b/edid.c
+index fa5da8f..5ca3b0e 100644
+--- a/edid.c
++++ b/edid.c
+@@ -92,11 +92,12 @@ parse_vendor_product(struct di_edid *edid,
+ 	out->manufacturer[1] = ((man >> 5) & 0x1F) + '@';
+ 	out->manufacturer[2] = ((man >> 0) & 0x1F) + '@';
+ 
+-	out->product = (uint16_t) (data[0x0A] | (data[0x0B] << 8));
+-	out->serial = (uint32_t) (data[0x0C] |
+-				  (data[0x0D] << 8) |
+-				  (data[0x0E] << 16) |
+-				  (data[0x0F] << 24));
++	out->product = (uint16_t) ((uint16_t)data[0x0A] |
++				   ((uint16_t)data[0x0B] << 8));
++	out->serial = (uint32_t) ((uint32_t)data[0x0C] |
++				  ((uint32_t)data[0x0D] << 8) |
++				  ((uint32_t)data[0x0E] << 16) |
++				  ((uint32_t)data[0x0F] << 24));
+ 
+ 	raw_week = data[0x10];
+ 	raw_year = data[0x11];

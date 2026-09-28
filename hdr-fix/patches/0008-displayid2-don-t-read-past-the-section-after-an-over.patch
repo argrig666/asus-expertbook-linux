@@ -1,0 +1,83 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: burakgon <burakgon12@gmail.com>
+Date: Mon, 28 Sep 2026 20:09:46 +0300
+Subject: [PATCH 08/12] displayid2: don't read past the section after an
+ oversized data block
+
+parse_data_block() returned the declared length of a data block that
+does not fit in the remaining section. The caller then advanced past the
+end of the section and checked the padding at that position with the
+remaining length of the previous iteration, reading beyond the EDID
+buffer. A checksum-valid EDID with one oversized DisplayID v2 data block
+is enough to trigger it (AddressSanitizer: heap-buffer-overflow READ).
+
+Consume the rest of the section instead, and compute the padding length
+from the final position. Also print the size_t block length with %zu.
+
+The jdi-lpm135m467-edp test expected a "Padding: Contains non-zero bytes"
+failure that edid-decode does not report: it was this bug reading the
+section checksum as padding. Update the expected diff.
+---
+ displayid2.c                      |  8 ++++++--
+ test/data/jdi-lpm135m467-edp.diff | 11 +++++------
+ 2 files changed, 11 insertions(+), 8 deletions(-)
+
+diff --git a/displayid2.c b/displayid2.c
+index 6ab9c7b..75dd45a 100644
+--- a/displayid2.c
++++ b/displayid2.c
+@@ -92,9 +92,11 @@ parse_data_block(struct di_displayid2 *displayid2, const uint8_t *data,
+ 	data_block_size = (size_t) data[0x02] + DISPLAYID2_DATA_BLOCK_HEADER_SIZE;
+ 	if (data_block_size > size) {
+ 		add_failure(displayid2,
+-			    "The length of this DisplayID data block (%d) exceeds the number of bytes remaining (%zu)",
++			    "The length of this DisplayID data block (%zu) exceeds the number of bytes remaining (%zu)",
+ 			    data_block_size, size);
+-		goto skip;
++		/* Consume what is left of the section: the declared length
++		 * would move the caller past the end of the section. */
++		return (ssize_t) size;
+ 	}
+ 
+ 	data_block = calloc(1, sizeof(*data_block));
+@@ -245,6 +247,8 @@ _di_displayid2_parse(struct di_displayid2 *displayid2, const uint8_t *data,
+ 		assert(data_block_size > 0);
+ 		i += (size_t) data_block_size;
+ 	}
++	/* Only the bytes between i and the checksum are padding. */
++	max_data_block_size = i < section_size - 1 ? section_size - 1 - i : 0;
+ 	if (!is_all_zeroes(&data[i], max_data_block_size)) {
+ 		if (max_data_block_size < DISPLAYID2_DATA_BLOCK_HEADER_SIZE) {
+ 			add_failure(displayid2,
+diff --git a/test/data/jdi-lpm135m467-edp.diff b/test/data/jdi-lpm135m467-edp.diff
+index c5167a0..c6b3f3c 100644
+--- a/test/data/jdi-lpm135m467-edp.diff
++++ b/test/data/jdi-lpm135m467-edp.diff
+@@ -1,6 +1,6 @@
+ --- ref
+ +++ di
+-@@ -36,32 +36,13 @@
++@@ -36,32 +36,9 @@
+  
+  Block 1, DisplayID Extension Block:
+    Version: 2.0
+@@ -22,8 +22,8 @@
+ -Block 0, Base EDID:
+ -  Missing Display Product Name.
+ -
+- Failures:
+- 
++-Failures:
++-
+ -Block 0, Base EDID:
+ -  Alphanumeric Data String: No newline, but one or more trailing spaces.
+ -  Alphanumeric Data String: No newline, but one or more trailing spaces.
+@@ -33,6 +33,5 @@
+ -  DisplayID: Missing DisplayID Type VII Detailed Timing Data Block.
+ -  DisplayID: DisplayID expects at least one preferred timing.
+ -
+-+Block 1, DisplayID Extension Block:
+-+  Padding: Contains non-zero bytes.
+- EDID conformity: FAIL
++-EDID conformity: FAIL
+++EDID conformity: PASS

@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Simon Ser <contact@emersion.fr>
 Date: Thu, 9 Oct 2025 18:44:37 +0200
-Subject: [PATCH 5/7] displayid2: add support for CTA-861 data blocks
+Subject: [PATCH 05/12] displayid2: add support for CTA-861 data blocks
 
 Signed-off-by: Simon Ser <contact@emersion.fr>
 (cherry picked from commit 7324cca007730b9534c691f2c59ce941c68eb5cd)

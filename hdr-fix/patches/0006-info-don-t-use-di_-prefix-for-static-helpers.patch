@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Simon Ser <contact@emersion.fr>
 Date: Thu, 9 Oct 2025 18:40:00 +0200
-Subject: [PATCH 6/7] info: don't use di_ prefix for static helpers
+Subject: [PATCH 06/12] info: don't use di_ prefix for static helpers
 
 The di_ prefix is reserved for public API functions.
 

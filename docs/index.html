@@ -571,7 +571,8 @@ Result: install-all is appropriate for this hardware.</code></pre>
           <div class="ba-arrow">→</div>
           <div class="ba-cell ba-good">
             <strong>After — <code>hdr-fix</code> <em>(optional)</em></strong>
-            The seven upstream commits that read DisplayID 2.0 CTA blocks,
+            The upstream commits that read DisplayID 2.0 CTA blocks, plus two
+            parser fixes of our own,
             backported onto 0.3.0 with the <code>.so.3</code> ABI intact and
             preferred through <code>ld.so.conf.d</code>; HDR appears in
             Display &amp; Monitor. Removed again once the distro ships 0.4.0.
@@ -811,7 +812,7 @@ Actions
           <tr>
             <td><a href="https://github.com/burakgon/asus-expertbook-linux/tree/main/hdr-fix"><code>hdr-fix</code></a></td>
             <td><span class="mono">1.0.0</span></td>
-            <td><em>(optional)</em> HDR toggle for the internal OLED — libdisplay-info 0.3.0 with the seven upstream DisplayID 2.0 commits, preferred via <code>ld.so.conf.d</code> until the distro ships 0.4.0</td>
+            <td><em>(optional)</em> HDR toggle for the internal OLED — libdisplay-info 0.3.0 with the upstream DisplayID 2.0 commits and two parser fixes, preferred via <code>ld.so.conf.d</code>; a pacman hook retires it when the package changes</td>
           </tr>
           <tr>
             <td><a href="https://github.com/burakgon/asus-expertbook-linux/tree/main/intel-perf-fix"><code>intel-perf-fix</code></a></td>
@@ -1152,34 +1153,42 @@ cs35l56 sdw:0:2:01fa:3556:01:0: Tuning PID: 0x23134, SID: 0x470200, TID: 0x84b06
         </p>
         <p>
           The module backports the seven upstream commits that add DisplayID
-          2.0 data-block and CTA-861 support onto 0.3.0. The public API only
-          gains three functions and an enum, so the result keeps the
-          <code>.so.3</code> ABI: all 86 symbols of the packaged library are
-          still exported and upstream's test suite passes 64/64. Install
-          refuses unless the system package is exactly
-          <code>libdisplay-info 0.3.0</code>, installs <code>meson</code>,
-          <code>ninja</code>, <code>gcc</code>, <code>patch</code> and
-          <code>hwdata</code> if missing, downloads the 0.3.0 release tarball,
-          checks its SHA-256 (the same pin as Arch's PKGBUILD), applies the
-          patches and builds the library.
+          2.0 data-block and CTA-861 support onto 0.3.0, plus three upstream
+          hardening fixes and two fixes of our own: those upstream commits,
+          still unchanged in upstream main, let a checksum-valid EDID with an
+          oversized DisplayID data block read past the end of the buffer, and
+          leaked data blocks when parsing failed. Both fixes are offered
+          upstream. The public API only gains three functions and an enum, so
+          the result keeps the <code>.so.3</code> ABI: all 86 symbols of the
+          packaged library are still exported. Upstream's 64 tests pass, also
+          under AddressSanitizer, and 300,000 randomized DisplayID 2.0 EDIDs
+          parse without a sanitizer error. Install only proceeds on package
+          releases known to be plain upstream 0.3.0 (Arch
+          <code>0.3.0-1</code>, CachyOS <code>0.3.0-1.1</code>), installs
+          <code>meson</code>, <code>ninja</code>, <code>gcc</code>,
+          <code>patch</code> and <code>hwdata</code> if missing, downloads the
+          0.3.0 release tarball, checks its SHA-256 (the same pin as Arch's
+          PKGBUILD), applies the patches and builds the library, stopping on
+          any failure.
         </p>
         <p><strong>Files installed:</strong></p>
         <ul>
           <li><code>/usr/local/lib/asus-expertbook-hdr/</code> — the patched <code>libdisplay-info.so.3</code></li>
           <li><code>/etc/ld.so.conf.d/asus-expertbook-hdr.conf</code> — lists that directory; the dynamic linker consults <code>ld.so.conf</code> directories before <code>/usr/lib</code>, so <code>libdisplay-info.so.3</code> resolves to the patched copy. No pacman-owned file is touched.</li>
+          <li><code>/etc/pacman.d/hooks/asus-expertbook-hdr.hook</code> + <code>/usr/local/lib/asus-expertbook-hdr-guard</code> — remove the override as soon as the <code>libdisplay-info</code> package is upgraded, rebuilt, downgraded or removed, so a distribution fix is never shadowed</li>
         </ul>
         <pre class="term"><code>./patch.sh install hdr-fix
 # log out and back in: KWin loads the library when it starts
 ./patch.sh status hdr-fix
-  system:   libdisplay-info 0.3.0
-  linker:   libdisplay-info.so.3 -&gt; /usr/local/lib/asus-expertbook-hdr/libdisplay-info.so.3
+  system:   libdisplay-info 0.3.0-1.1
+  linker:   libdisplay-info.so.3 -&gt; /usr/local/lib/asus-expertbook-hdr/libdisplay-info.so.3 (built for 0.3.0-1.1)
   panel:    PQ yes, BT.2020 yes, max 1600 cd/m² (as KWin reads it)</code></pre>
         <p>
           Then turn HDR on in System Settings &gt; Display &amp; Monitor.
           <code>display-fix</code>'s PSR1 pin keeps the HDR colors correct
-          across toggles. Once the system package is 0.4.0 or newer,
-          reinstalling the module removes the override again: KWin then links
-          <code>.so.4</code>, which has the fix. See
+          across toggles. When the distribution ships 0.4.0, KWin links
+          <code>.so.4</code>, which has the fix, and the hook has already
+          removed the override. See
           <a href="https://github.com/burakgon/asus-expertbook-linux/blob/main/hdr-fix/README.md"><code>hdr-fix/README.md</code></a>.
         </p>
       </details>

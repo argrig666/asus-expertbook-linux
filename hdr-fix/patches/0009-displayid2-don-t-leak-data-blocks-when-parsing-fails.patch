@@ -1,0 +1,53 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: burakgon <burakgon12@gmail.com>
+Date: Mon, 28 Sep 2026 20:09:46 +0300
+Subject: [PATCH 09/12] displayid2: don't leak data blocks when parsing fails
+
+When a CTA-861 data block fails to parse, parse_data_block() freed the
+DisplayID data block but not the CTA data blocks already attached to it.
+When a data block fails, _di_displayid2_parse() returned false with the
+earlier data blocks still attached, and parse_ext() frees the extension
+without calling _di_displayid2_finish(). Release both.
+---
+ displayid2.c | 13 +++++++++++--
+ 1 file changed, 11 insertions(+), 2 deletions(-)
+
+diff --git a/displayid2.c b/displayid2.c
+index 75dd45a..52f0f75 100644
+--- a/displayid2.c
++++ b/displayid2.c
+@@ -78,6 +78,9 @@ parse_cta861_block(struct di_displayid2 *displayid2, struct di_displayid2_data_b
+ 	return true;
+ }
+ 
++static void
++data_block_destroy(struct di_displayid2_data_block *data_block);
++
+ static ssize_t
+ parse_data_block(struct di_displayid2 *displayid2, const uint8_t *data,
+ 		 size_t size)
+@@ -144,7 +147,9 @@ skip:
+ 	return (ssize_t) data_block_size;
+ 
+ error:
+-	free(data_block);
++	/* Also releases the CTA data blocks parsed before the failure. */
++	if (data_block)
++		data_block_destroy(data_block);
+ 	return -1;
+ }
+ 
+@@ -242,8 +247,12 @@ _di_displayid2_parse(struct di_displayid2 *displayid2, const uint8_t *data,
+ 			break;
+ 		data_block_size = parse_data_block(displayid2, &data[i],
+ 						   max_data_block_size);
+-		if (data_block_size < 0)
++		if (data_block_size < 0) {
++			/* The caller frees the extension without finishing it. */
++			_di_displayid2_finish(displayid2);
++			displayid2->data_blocks_len = 0;
+ 			return false;
++		}
+ 		assert(data_block_size > 0);
+ 		i += (size_t) data_block_size;
+ 	}

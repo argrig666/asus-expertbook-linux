@@ -56,7 +56,7 @@ different distro, the modules themselves still apply — only the
 | **Cirrus CS42L43** codec + 2× **CS35L56** speaker amps (PCI subsystem `1043:15e4`) | **Dummy Output / silent speakers.** A ghost RT722 can abort ALSA card registration; older userspace also lacks tuning/UCM. | Uses the accepted in-kernel B9406 quirk when present and DKMS only on older kernels; HiFi routing and calibrated amps work. | [`audio-fix`](audio-fix/) |
 | **Intel Wi-Fi 7 BE211** Panther Lake CNVi (`8086:e440`) | **Wi-Fi 7 (802.11be / EHT) is unstable.** EHT RX can collapse to MCS0/NSS1 and MLO sessions tear down. Linux 7.2's C106 firmware may separately flood `missed beacons` warnings even while data flows. | EHT disabled (`disable_11be=Y`) → fast **Wi-Fi 6 / HE** fallback; status reports firmware and warning count without hiding logs or forcing a firmware downgrade. | [`wifi-fix`](wifi-fix/) |
 | **Samsung Display Corp** eDP panel + Intel **`xe`** driver (Xe3 Panther Lake iGPU) | **Linux 7.2's Panel Replay default misbehaves on this panel:** PSR idle timeouts with on-screen corruption, flicker, VRR smearing, stale frames, and HDR washed out after every HDR modeset. Brightness can also change in sysfs without changing panel luminance. | Self-refresh pinned to PSR1: owners report no flicker, stale frames or VRR smearing, and HDR stays vivid across toggles; forced VESA DPCD backlight makes KDE/sysfs brightness work. | [`display-fix`](display-fix/) |
-| **Samsung OLED HDR** (EDID HDR metadata inside DisplayID 2.0) | **KDE offers no HDR toggle.** libdisplay-info 0.3.0 never looks inside the DisplayID 2.0 extension where this panel declares PQ, 1600 cd/m² and BT.2020, so KWin sees an SDR panel. | *(optional)* The seven upstream commits that read DisplayID 2.0 CTA blocks, backported onto 0.3.0 with the `.so.3` ABI intact and preferred through `ld.so.conf.d`; HDR appears in Display & Monitor. Removed again once the distro ships 0.4.0. | [`hdr-fix`](hdr-fix/) |
+| **Samsung OLED HDR** (EDID HDR metadata inside DisplayID 2.0) | **KDE offers no HDR toggle.** libdisplay-info 0.3.0 never looks inside the DisplayID 2.0 extension where this panel declares PQ, 1600 cd/m² and BT.2020, so KWin sees an SDR panel. | *(optional)* The upstream commits that read DisplayID 2.0 CTA blocks, backported onto 0.3.0 with two parser fixes of our own and the `.so.3` ABI intact, preferred through `ld.so.conf.d`; HDR appears in Display & Monitor. A pacman hook retires it whenever the distro's package changes. | [`hdr-fix`](hdr-fix/) |
 | **Intel Core Ultra X7/X9** Panther Lake hybrid (P + E + LP-E cores) | **No userspace thermal policy:** the OEM's adaptive thermal tables (PL1/PL2 limits, passive trips) are not applied; only the kernel's int340x sensors and limits are exposed. | `thermald` runs the OEM tables in adaptive mode. `intel-lpmd` is opt-in: on Panther Lake it showed no significant idle gain and slowed app launches. | [`intel-perf-fix`](intel-perf-fix/) |
 | **Platform profiles** (Intel SoC Power Slider + asus-wmi) | **Power Save only reaches `balanced`.** The legacy profile file lists only the choices both handlers share, so the SoC slider never goes low-power and the fans never go quiet. | Power Save sets the SoC slider to `low-power` and asus-wmi to `quiet`; Balanced and Performance map one-to-one. power-profiles-daemon stays in charge. | [`power-profile-bridge`](power-profile-bridge/) |
 | **USB UVC webcam** (+ idle Panther Lake NPU) | **No AI camera effects.** Windows Studio Effects (background blur, smart framing) doesn't exist on Linux out of the box. | **CPU** background blur via OBS + `obs-backgroundremoval`, exposed as a virtual camera ("AI Camera"). *(NPU offload is not available in the OBS plugin on Linux — see the module's reality-check note.)* | [`webcam-ai-fix`](webcam-ai-fix/) |
@@ -780,11 +780,15 @@ forgets them at power-off. Details in
 The panel's EDID declares HDR (PQ, max 1600 cd/m², BT.2020 RGB) inside a
 DisplayID 2.0 extension. libdisplay-info 0.3.0, which KWin uses, does not look
 there; 0.4.0 does but changes the soname. The module builds 0.3.0 from its
-pinned release tarball with the seven upstream DisplayID 2.0 commits, keeps the
-`.so.3` ABI (all packaged symbols exported, upstream tests 64/64), installs it
-under `/usr/local/lib/asus-expertbook-hdr` and puts that directory in
-`/etc/ld.so.conf.d`. No pacman file is touched, and install removes the
-override once the system package is 0.4.0. Details in
+pinned release tarball with the seven upstream DisplayID 2.0 commits, three
+upstream hardening fixes, and two fixes of our own for an out-of-bounds read
+and a leak those upstream commits still carry (found by fuzzing under
+AddressSanitizer; both offered upstream). It keeps the `.so.3` ABI (all
+packaged symbols exported, upstream tests 64/64 also under ASan), installs the
+library under `/usr/local/lib/asus-expertbook-hdr` and puts that directory in
+`/etc/ld.so.conf.d`. No pacman file is touched. It only builds against package
+releases known to be plain upstream 0.3.0, and a pacman hook removes the
+override whenever the `libdisplay-info` package changes. Details in
 [`hdr-fix/README.md`](hdr-fix/README.md).
 
 ## How it works

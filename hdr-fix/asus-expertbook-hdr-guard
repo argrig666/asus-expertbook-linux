@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# asus-expertbook-linux hdr-fix: pacman PostTransaction guard.
+#
+# The hdr-fix override (a patched libdisplay-info.so.3 preferred through
+# /etc/ld.so.conf.d) was built for one exact libdisplay-info package. When
+# that package is upgraded, rebuilt, downgraded or removed, the override could
+# shadow fixes the distribution just shipped, so it is retired here: the
+# packaged library takes over and KWin uses it from the next login.
+set -u
+
+LIBDIR=/usr/local/lib/asus-expertbook-hdr
+CONF=/etc/ld.so.conf.d/asus-expertbook-hdr.conf
+
+[[ -e $CONF || -d $LIBDIR ]] || exit 0
+
+want="$(cat "$LIBDIR/BASE_PACKAGE" 2>/dev/null || true)"
+have="$(pacman -Q libdisplay-info 2>/dev/null | awk '{print $2}' || true)"
+[[ -n $want && $have == "$want" ]] && exit 0
+
+rm -f -- "$CONF"
+rm -rf -- "$LIBDIR"
+ldconfig
+echo "asus-expertbook-linux hdr-fix: libdisplay-info is now ${have:-not installed};"
+echo "  the HDR override was built for ${want:-an unknown version} and has been removed."
+echo "  Log out and back in. If KDE loses the internal panel's HDR toggle, run"
+echo "  ./patch.sh install hdr-fix again."

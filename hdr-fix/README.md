@@ -24,39 +24,58 @@ distributions still ship 0.3.0.
 
 ## What the module does
 
-`patches/` holds the seven upstream commits that add DisplayID 2.0 data-block
-and CTA-861 support, backported onto 0.3.0 unchanged apart from two test-data
-files that do not exist in 0.3.0:
+`patches/` holds a series on top of the 0.3.0 release:
 
 ```
-0001 displayid2: decode data blocks structure
-0002 cta: introduce struct di_cta
-0003 cta: make di_cta.flags optional
-0004 cta: expose _di_cta_data_block_{parse,destroy}
-0005 displayid2: add support for CTA-861 data blocks
-0006 info: don't use di_ prefix for static helpers
-0007 info: search CTA blocks in DisplayID v2 extensions
+0001-0007  upstream DisplayID 2.0 data-block and CTA-861 support
+           (788c056 d535192 34b3635 4713505 7324cca 73ab82d 73ec53d)
+0008       displayid2: don't read past the section after an oversized data block
+0009       displayid2: don't leak data blocks when parsing fails
+0010-0012  upstream hardening 0.3.0 predates (8057b29, 76f133a, cb5e3ed ported)
 ```
+
+0001–0007 are backported unchanged apart from two test-data files that do not
+exist in 0.3.0. 0008 and 0009 fix bugs those upstream commits carry and that
+upstream main still has: a checksum-valid EDID with one oversized DisplayID 2.0
+data block made the parser read past the end of the EDID buffer
+(AddressSanitizer: heap-buffer-overflow), and a failing data block leaked the
+blocks parsed before it. Both fixes apply to upstream main and pass its 69
+tests there; they are drafted for upstream in
+[`upstream-patches/`](../upstream-patches/). 0012 closes an out-of-bounds read
+for VIC 220 that the packaged 0.3.0 library also has.
 
 The public API only gains three functions and an enum, so the result keeps the
 `.so.3` ABI: all 86 symbols of the packaged library are still exported
-(unversioned, as before) and upstream's test suite passes 64/64.
+(unversioned, as before). Testing: upstream's 64 tests pass in a release and an
+AddressSanitizer build, and 300,000 randomized, checksum-valid DisplayID 2.0
+EDIDs parse under AddressSanitizer and UndefinedBehaviorSanitizer without an
+error report. Two small leaks remain in 0.3.0's own CTA infoframe and speaker
+location parsers on malformed input; the packaged library has them too.
 
 Install:
 
-1. refuses unless the system package is exactly `libdisplay-info 0.3.0`;
+1. refuses unless the system package is a release known to be built from the
+   unmodified 0.3.0 tarball (Arch `0.3.0-1`, CachyOS `0.3.0-1.1`); any other
+   release may carry distribution fixes the override would hide
+   (`HDR_FIX_FORCE=1` overrides this after you have checked);
 2. installs `meson`, `ninja`, `gcc`, `patch` and `hwdata` if missing;
 3. downloads the 0.3.0 release tarball and checks its SHA-256 (the same pin as
    Arch's PKGBUILD);
-4. applies the patches and builds the library;
+4. applies the patches and builds the library, stopping on any failure;
 5. installs it in `/usr/local/lib/asus-expertbook-hdr/` and lists that
    directory in `/etc/ld.so.conf.d/asus-expertbook-hdr.conf`. The dynamic
    linker consults `ld.so.conf` directories before `/usr/lib`, so
-   `libdisplay-info.so.3` resolves to the patched copy. No pacman-owned file
-   is touched.
+   `libdisplay-info.so.3` resolves to the patched copy. No pacman-owned file is
+   touched;
+6. installs a pacman hook (`/etc/pacman.d/hooks/asus-expertbook-hdr.hook`)
+   that removes the override as soon as the `libdisplay-info` package is
+   upgraded, rebuilt, downgraded or removed, so a distribution fix is never
+   shadowed. After that, KWin uses the packaged library from the next login;
+   rerun the module if the toggle disappears and the new package still lacks
+   the fix.
 
-Once the system package is 0.4.0 or newer, reinstalling the module removes the
-override again: KWin then links `.so.4`, which has the fix.
+Once the system package is 0.4.0 or newer, KWin links `.so.4`, which has the
+fix, and the module removes itself on the next install.
 
 ## Install
 
@@ -67,8 +86,8 @@ override again: KWin then links `.so.4`, which has the fix.
 ```
 
 ```
-  system:   libdisplay-info 0.3.0
-  linker:   libdisplay-info.so.3 -> /usr/local/lib/asus-expertbook-hdr/libdisplay-info.so.3
+  system:   libdisplay-info 0.3.0-1.1
+  linker:   libdisplay-info.so.3 -> /usr/local/lib/asus-expertbook-hdr/libdisplay-info.so.3 (built for 0.3.0-1.1)
   panel:    PQ yes, BT.2020 yes, max 1600 cd/m² (as KWin reads it)
 ```
 
@@ -80,7 +99,8 @@ Then turn HDR on in System Settings > Display & Monitor.
 ./patch.sh uninstall hdr-fix
 ```
 
-Removes the library and the `ld.so.conf.d` entry; log out and back in.
+Removes the library, the `ld.so.conf.d` entry and the pacman hook; log out and
+back in.
 
 ## Notes
 

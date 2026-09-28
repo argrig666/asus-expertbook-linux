@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Simon Ser <contact@emersion.fr>
 Date: Thu, 9 Oct 2025 18:55:18 +0200
-Subject: [PATCH 7/7] info: search CTA blocks in DisplayID v2 extensions
+Subject: [PATCH 07/12] info: search CTA blocks in DisplayID v2 extensions
 
 Signed-off-by: Simon Ser <contact@emersion.fr>
 (cherry picked from commit 73ec53d800275cce4b8a4af6af03ea2aac9912fd)

@@ -1,0 +1,13 @@
+# Installed by asus-expertbook-linux (hdr-fix). Retires the patched
+# libdisplay-info override whenever the packaged library changes.
+[Trigger]
+Operation = Install
+Operation = Upgrade
+Operation = Remove
+Type = Package
+Target = libdisplay-info
+
+[Action]
+Description = Checking the asus-expertbook-linux libdisplay-info HDR override...
+When = PostTransaction
+Exec = /usr/local/lib/asus-expertbook-hdr-guard
