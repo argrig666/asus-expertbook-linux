@@ -18,12 +18,15 @@
 # over the panel's DSC link and every screen update paints red/green speckle
 # garbage, most likely because xe gates PSR2 + DSC on platform generation only
 # while this sink advertises DSC selective update for Panel Replay alone.
-# Disabling selective fetch (`xe.enable_psr2_sel_fetch=0`) freezes the panel
-# on the boot console text. PSR1 passes everything: vivid colors across HDR
-# toggles, a smooth cursor, no stale frames, and self-refresh still saves
-# power on a static screen. Both PSR parameters are needed, since
-# `enable_psr=1` alone leaves Panel Replay on (Panel Replay bypasses the PSR2
-# checks that parameter feeds into).
+# Disabling only selective fetch (`xe.enable_psr2_sel_fetch=0`) keeps Panel
+# Replay without selective update, which freezes the panel on the boot console
+# text. PSR1 passes everything: vivid colors across HDR toggles, a smooth
+# cursor, no stale frames, and self-refresh still saves power on a static
+# screen. Both PSR parameters are needed, since `enable_psr=1` alone leaves
+# Panel Replay on (Panel Replay bypasses the PSR2 checks that parameter feeds
+# into). The older `xe.enable_panel_replay=0 xe.enable_psr2_sel_fetch=0` pair
+# lands on PSR1 too: Panther Lake has no PSR2 hardware tracking to fall back on
+# without selective fetch. `enable_psr=1` says it directly; status accepts both.
 #
 # modprobe.d alone is NOT enough on this distro: xe loads from the initramfs
 # before /etc/modprobe.d is honoured, so the params have to land on the kernel
@@ -33,10 +36,14 @@
 # same three parameters on GRUB_CMDLINE_LINUX_DEFAULT instead.
 #
 # We still drop the modprobe.d file as belt-and-suspenders for any future
-# scenario where xe is rmmod'd and re-loaded post-boot. Install also retires
-# the two older local files that carried the global `=0` safety switches
-# (`xe.enable_psr=0` would override PSR1 and `xe.enable_psr2_sel_fetch=0`
-# would freeze the boot).
+# scenario where xe is rmmod'd and re-loaded post-boot. Install also removes
+# the old `xe-disable-psr.conf`, which turned self-refresh off entirely.
+#
+# `asus-expertbook-b9406-display.conf` is Omarchy's own drop-in for this
+# laptop. It sets only `xe.enable_panel_replay=0`, which agrees with PSR1, so
+# it stays. It sorts after our 90- file and wins on the cmdline, so a
+# hand-edited copy that sets another PSR or Panel Replay value is archived.
+# Version 1.3 archived Omarchy's stock copy as well; install puts that back.
 
 MODULE_NAME="display-fix"
 MODULE_DESC="B9406CAA xe: PSR1 self-refresh + working DPCD brightness"
@@ -47,24 +54,42 @@ MODULE_FILES=(
   "limine-display.conf:/etc/limine-entry-tool.d/90-asus-expertbook-linux-display.conf"
 )
 
+# True when a Limine drop-in, comments aside, sets xe.enable_psr or
+# xe.enable_panel_replay to anything but the PSR1 pair this module installs.
+_df_fights_psr1() {
+  local token
+  while IFS= read -r token; do
+    case $token in
+      xe.enable_psr=1 | xe.enable_panel_replay=0) ;;
+      xe.enable_psr=* | xe.enable_panel_replay=*) return 0 ;;
+    esac
+  done < <(sed 's/#.*//' -- "$1" | grep -o 'xe\.enable_[a-z0-9_]*=[^"[:space:]]*')
+  return 1
+}
+
 _df_remove_obsolete_files() {
   local old_modprobe="/etc/modprobe.d/xe-disable-psr.conf"
-  local old_limine="/etc/limine-entry-tool.d/asus-expertbook-b9406-display.conf"
-  local archived="${old_limine}.disabled-by-asus-expertbook-linux"
+  local omarchy_limine="/etc/limine-entry-tool.d/asus-expertbook-b9406-display.conf"
+  local archived="${omarchy_limine}.disabled-by-asus-expertbook-linux"
+  local dest
 
   if [[ -f $old_modprobe ]]; then
     rm -- "$old_modprobe"
     log "[display-fix] removed obsolete PSR-disable file $old_modprobe"
   fi
 
-  if [[ -f $old_limine ]]; then
-    if [[ ! -e $archived ]]; then
-      mv -- "$old_limine" "$archived"
-      log "[display-fix] archived obsolete Limine drop-in as $archived"
-    else
-      rm -- "$old_limine"
-      log "[display-fix] removed duplicate obsolete Limine drop-in $old_limine"
+  if [[ -f $omarchy_limine ]]; then
+    if _df_fights_psr1 "$omarchy_limine"; then
+      dest=$archived
+      if [[ -e $dest ]]; then
+        dest="$archived.$(date +%Y%m%d%H%M%S)"
+      fi
+      mv -- "$omarchy_limine" "$dest"
+      log "[display-fix] archived $omarchy_limine as $dest: it overrides the PSR1 parameters"
     fi
+  elif [[ -f $archived ]] && ! _df_fights_psr1 "$archived"; then
+    mv -- "$archived" "$omarchy_limine"
+    log "[display-fix] restored Omarchy's Panel Replay drop-in $omarchy_limine"
   fi
 }
 
@@ -121,17 +146,22 @@ module_status_extra() {
     esac
   done < <(tr ' ' '\n' </proc/cmdline 2>/dev/null)
 
-  if [[ $sel_fetch == 0 ]]; then
-    printf '  self-refresh:%s xe.enable_psr2_sel_fetch=0 active: this freezes the panel at boot on Panther Lake, remove it%s\n' \
-      "$c_warn" "$c_off"
-  elif [[ $panel_replay == 0 && $psr == 1 ]]; then
-    printf '  self-refresh:%s PSR1 active (xe.enable_panel_replay=0 xe.enable_psr=1)%s\n' \
-      "$c_ok" "$c_off"
-  elif [[ $panel_replay == 0 ]]; then
-    printf '  self-refresh:%s xe.enable_panel_replay=0 without xe.enable_psr=1: PSR2 selective update paints garbage on this panel%s\n' \
-      "$c_warn" "$c_off"
-  elif [[ $psr == 0 ]]; then
-    printf '  self-refresh:%s xe.enable_psr=0 active: self-refresh fully off (expected PSR1)%s\n' \
+  if [[ $panel_replay == 0 ]]; then
+    if [[ $psr == 0 ]]; then
+      printf '  self-refresh:%s xe.enable_psr=0 active: self-refresh fully off (expected PSR1)%s\n' \
+        "$c_warn" "$c_off"
+    elif [[ $psr == 1 ]]; then
+      printf '  self-refresh:%s PSR1 active (xe.enable_panel_replay=0 xe.enable_psr=1)%s\n' \
+        "$c_ok" "$c_off"
+    elif [[ $sel_fetch == 0 ]]; then
+      printf '  self-refresh:%s PSR1 active (xe.enable_panel_replay=0 xe.enable_psr2_sel_fetch=0)%s\n' \
+        "$c_ok" "$c_off"
+    else
+      printf '  self-refresh:%s xe.enable_panel_replay=0 without xe.enable_psr=1: PSR2 selective update paints garbage on this panel%s\n' \
+        "$c_warn" "$c_off"
+    fi
+  elif [[ $sel_fetch == 0 ]]; then
+    printf '  self-refresh:%s xe.enable_psr2_sel_fetch=0 without xe.enable_panel_replay=0: Panel Replay without selective update freezes the panel at boot%s\n' \
       "$c_warn" "$c_off"
   elif [[ -f $staged ]]; then
     printf '  self-refresh:%s PSR1 staged, reboot to apply (this boot runs the Panel Replay default)%s\n' \
@@ -153,8 +183,9 @@ module_status_extra() {
     printf '  backlight:%s xe.enable_dpcd_backlight=2 is not active%s\n' "$c_warn" "$c_off"
   fi
 
-  # debugfs is root-only, so this line shows for patch.sh (which auto-elevates)
-  # and stays silent for an unprivileged caller. xe registers its device under
+  # debugfs is root-only, so this line shows under `sudo ./patch.sh status` and
+  # the interactive menu (which re-executes under sudo) and stays silent for an
+  # unprivileged caller. xe registers its device under
   # dri/0000:00:02.0 where i915 used dri/0, hence the glob; the per-connector
   # file is the authoritative one and the device-level file its older alias.
   local status_file="" candidate mode
