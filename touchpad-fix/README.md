@@ -25,7 +25,11 @@ any other `*.quirks` file in `/etc/libinput` is ignored. That file is shared
 with every other override on the machine, so since 1.2.0 the module writes a
 marked block into it instead of replacing it. Install drops earlier B9406
 touchpad sections (the 1.1.x copy and Omarchy-derived ones) and keeps every
-other section; uninstall removes only the block.
+other section; uninstall removes only the block. The rewritten file must pass
+`libinput quirks validate` before it replaces the old one, which is kept as
+`local-overrides.quirks.asus-expertbook-linux.bak`; a broken file would make
+libinput drop every quirk on the machine. If the begin/end markers do not pair
+up (edited by hand), install and uninstall stop without touching the file.
 
 The libinput quirk is the load-bearing fix and is sufficient on its own
 (verified on the reference machine: the hwdb clamp is **not** installed, the

@@ -895,7 +895,11 @@ Actions
           module therefore writes its own managed block instead of replacing
           the file: install drops earlier B9406 touchpad sections (the 1.1.x
           copy and Omarchy-derived ones) and keeps every other section;
-          uninstall removes only the block. After a reboot,
+          uninstall removes only the block. The rewritten file has to pass
+          <code>libinput quirks validate</code> before it replaces the old
+          one (kept as <code>local-overrides.quirks.asus-expertbook-linux.bak</code>),
+          and unpaired markers stop the module without touching the file.
+          After a reboot,
           <code>sudo libinput quirks list /dev/input/event9</code> should print
           <code>AttrEventCode=-ABS_MT_PRESSURE;-ABS_PRESSURE;</code>.
         </p>

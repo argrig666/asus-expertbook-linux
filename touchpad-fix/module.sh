@@ -64,22 +64,70 @@ _tp_has_content() {
   grep -qv -E '^[[:space:]]*(#.*)?$' <<<"$1"
 }
 
+# The markers must pair up: never nested, never left open. Anything else means
+# the file was edited by hand, and stripping would guess at what to delete.
+_tp_markers_ok() {
+  awk -v b="$TP_BEGIN" -v e="$TP_END" '
+    $0 == b { if (open) bad = 1; open = 1 }
+    $0 == e { if (!open) bad = 1; open = 0 }
+    END { exit (bad || open) }
+  ' "$1"
+}
+
+# Check a candidate file the way libinput will read it: one bad line (or a
+# file with no section at all) makes libinput drop every quirk on the machine.
+_tp_validate() {
+  local dir rc=0
+  command -v libinput >/dev/null 2>&1 || return 0
+  dir="$(mktemp -d)" || return 1
+  if ! cp -- "$1" "$dir/local-overrides.quirks" ||
+     ! libinput quirks validate --data-dir "$dir"; then
+    rc=1
+  fi
+  rm -rf -- "$dir"
+  return "$rc"
+}
+
+# Replace the file atomically after validating the new content, keeping the
+# previous version next to it as local-overrides.quirks.asus-expertbook-linux.bak.
 _tp_write() {
-  local content="$1"
-  install -d -m 0755 "${TP_QUIRKS%/*}"
-  printf '%s\n' "$content" >"$TP_QUIRKS.tmp"
-  chmod 0644 "$TP_QUIRKS.tmp"
-  mv -f -- "$TP_QUIRKS.tmp" "$TP_QUIRKS"
+  local content="$1" tmp
+  install -d -m 0755 "${TP_QUIRKS%/*}" || return 1
+  tmp="$(mktemp "${TP_QUIRKS%/*}/.local-overrides.quirks.XXXXXX")" || return 1
+  if ! printf '%s\n' "$content" >"$tmp" || ! chmod 0644 "$tmp"; then
+    rm -f -- "$tmp"
+    return 1
+  fi
+  if ! _tp_validate "$tmp"; then
+    rm -f -- "$tmp"
+    die "[touchpad-fix] the new $TP_QUIRKS would not pass 'libinput quirks validate'; left it unchanged"
+  fi
+  if [[ -f $TP_QUIRKS ]] && ! cp -a -- "$TP_QUIRKS" "$TP_QUIRKS.asus-expertbook-linux.bak"; then
+    rm -f -- "$tmp"
+    return 1
+  fi
+  mv -f -- "$tmp" "$TP_QUIRKS" || { rm -f -- "$tmp"; return 1; }
+}
+
+# Print the file with our block and stale B9406 sections removed, refusing to
+# guess when the markers are broken.
+_tp_rest() {
+  _tp_markers_ok "$TP_QUIRKS" ||
+    die "[touchpad-fix] $TP_QUIRKS has an unpaired '$TP_BEGIN' or '$TP_END' line; fix it by hand, nothing was changed"
+  _tp_strip "$TP_QUIRKS"
 }
 
 _tp_install_quirk() {
   local rest="" block
-  [[ -f $TP_QUIRKS ]] && rest="$(_tp_strip "$TP_QUIRKS")"
-  block="$(printf '%s\n' "$TP_BEGIN"; cat "$TP_QUIRK_SRC"; printf '%s' "$TP_END")"
+  if [[ -f $TP_QUIRKS ]]; then
+    rest="$(_tp_rest)" || exit 1
+  fi
+  block="$(printf '%s\n' "$TP_BEGIN"; cat "$TP_QUIRK_SRC"; printf '%s' "$TP_END")" ||
+    die "[touchpad-fix] cannot read $TP_QUIRK_SRC"
   if _tp_has_content "$rest"; then
-    _tp_write "$rest"$'\n\n'"$block"
+    _tp_write "$rest"$'\n\n'"$block" || die "[touchpad-fix] cannot write $TP_QUIRKS"
   else
-    _tp_write "$block"
+    _tp_write "$block" || die "[touchpad-fix] cannot write $TP_QUIRKS"
   fi
   log "[touchpad-fix] quirk block written to $TP_QUIRKS"
 }
@@ -87,11 +135,15 @@ _tp_install_quirk() {
 _tp_remove_quirk() {
   local rest
   [[ -f $TP_QUIRKS ]] || return 0
-  rest="$(_tp_strip "$TP_QUIRKS")"
+  rest="$(_tp_rest)" || exit 1
   if _tp_has_content "$rest"; then
-    _tp_write "$rest"
+    _tp_write "$rest" || die "[touchpad-fix] cannot write $TP_QUIRKS"
   else
-    rm -f -- "$TP_QUIRKS"
+    # libinput rejects an override file without any section, so remove it.
+    if ! cp -a -- "$TP_QUIRKS" "$TP_QUIRKS.asus-expertbook-linux.bak" ||
+       ! rm -f -- "$TP_QUIRKS"; then
+      die "[touchpad-fix] cannot remove $TP_QUIRKS"
+    fi
   fi
 }
 
