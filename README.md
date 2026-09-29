@@ -832,7 +832,7 @@ asus-expertbook-linux/
 ├── webcam-ai-fix/  …
 ├── wifi-fix/  …
 ├── upstream-patches/           # accepted/pending upstream patches + tracker drafts
-│   └── 0001, 0003, 0004, 0005.patch, stable request, issue drafts
+│   └── 0001, 0003–0006.patch, stable request, issue drafts
 ├── lib/
 │   └── distro.sh               # package manager / initramfs / bootloader / services
 ├── docs/                       # the GitHub Pages site
@@ -973,6 +973,7 @@ pending and retired work:
 | `0003` | libinput | `touchpad-fix`'s override: marks `093A:4F05` as a pressure pad (`INPUT_PROP_PRESSUREPAD`), as upstream did for `4811`. Not sent: needs an on-device test |
 | `0004` | Linux SoundWire | **Accepted** as upstream commit `90af3209742d` (Linux 7.3); retained for backports, stable request for 7.2.y drafted |
 | `0005` | power-profiles-daemon | `power-profile-bridge`'s drop-in: stops an emulated power-saver from switching itself back to balanced. Not sent; its new test fails on main and the suite passes with it |
+| `0006` | Linux platform/x86 (`asus-wmi`) | Keyboard backlight read-back quirk from [#12](https://github.com/burakgon/asus-expertbook-linux/pull/12): the level stops reading as 0. Not sent |
 | drafts | drm/xe, libdisplay-info, Arch | The drm/xe issue for `0001`, a libdisplay-info report for the DisplayID v2 overread fixed in `hdr-fix`, and a request for Arch to ship libdisplay-info 0.4.0 |
 
 See the tracking notes for current applicability against `torvalds/linux` /

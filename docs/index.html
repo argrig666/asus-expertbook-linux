@@ -1744,6 +1744,11 @@ EC set level 0/3 | manual override active for 0.0-18.4 lux (reading 9.2)</code><
             <td><code>power-profile-bridge</code>'s drop-in: an emulated power-saver no longer reads its own <code>balanced</code> write back as a switch to balanced. <strong>Not sent</strong>: its new integration test fails on main every time and the full suite passes with the fix (129/129)</td>
           </tr>
           <tr>
+            <td><span class="mono">0006</span></td>
+            <td><code>drivers/platform/x86/asus-wmi.c</code></td>
+            <td>Keyboard backlight read-back quirk from <a href="https://github.com/burakgon/asus-expertbook-linux/pull/12">#12</a>: <code>kbd_led_get()</code> returns the cached level instead of the constant 0 this firmware reports. <strong>Not sent</strong></td>
+          </tr>
+          <tr>
             <td>drafts</td>
             <td>drm/xe issue; libdisplay-info; Arch packaging</td>
             <td>The drm/xe issue text that accompanies <code>0001</code>, a libdisplay-info report for the DisplayID v2 overread fixed in <code>hdr-fix</code>, and a request for Arch to ship libdisplay-info 0.4.0, which would make <code>hdr-fix</code> unnecessary. All are for the maintainer to send</td>

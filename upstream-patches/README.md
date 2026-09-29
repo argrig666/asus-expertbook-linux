@@ -126,7 +126,7 @@ drm-intel-next for 7.4).
 ## Drafts for other trackers
 
 - [`libdisplay-info-displayid2-oob.md`](libdisplay-info-displayid2-oob.md):
-  a confidential report for libdisplay-info. Since 788c056, a checksum-valid
+  a report for libdisplay-info (already public here, so file it promptly). Since 788c056, a checksum-valid
   EDID with one oversized DisplayID v2 data block makes the parser read past the
   end of the EDID buffer (reproduced with AddressSanitizer on main `62a9346`),
   and failing data blocks leak. `hdr-fix/patches/0008` and `0009` fix both, apply
