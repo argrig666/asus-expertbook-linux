@@ -11,6 +11,55 @@ ok()    { printf '  %sOK%s   %s\n' "$c_ok" "$c_off" "$*"; }
 warn()  { printf '  %sWARN%s %s\n' "$c_warn" "$c_off" "$*"; }
 fail()  { printf '  %sFAIL%s %s\n' "$c_err" "$c_off" "$*"; }
 note()  { printf '  %s%s%s\n' "$c_dim" "$*" "$c_off"; }
+log()   { note "$*"; }
+die()   { fail "$*"; exit 1; }
+
+# Report the platform exactly as the patcher resolves it. Run from a clone this
+# uses lib/distro.sh itself; the README also documents this script as a
+# `curl | bash` one-liner, where that file is not on disk, so the three probes
+# it needs have a self-contained fallback below.
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
+# shellcheck source=../lib/distro.sh
+[[ -f "$SCRIPT_DIR/../lib/distro.sh" ]] && source "$SCRIPT_DIR/../lib/distro.sh"
+
+if ! declare -F distro_family >/dev/null; then
+  distro_family() {
+    local id="" id_like="" token
+    if [[ -r /etc/os-release ]]; then
+      # shellcheck disable=SC1091
+      id="$( { . /etc/os-release; printf '%s' "${ID:-}"; } 2>/dev/null || true )"
+      # shellcheck disable=SC1091
+      id_like="$( { . /etc/os-release; printf '%s' "${ID_LIKE:-}"; } 2>/dev/null || true )"
+    fi
+    # shellcheck disable=SC2086
+    for token in $id $id_like; do
+      case "$token" in
+        arch)          echo arch;   return 0 ;;
+        debian|ubuntu) echo debian; return 0 ;;
+      esac
+    done
+    if command -v pacman >/dev/null 2>&1; then echo arch
+    elif command -v dpkg-query >/dev/null 2>&1; then echo debian
+    else echo unknown
+    fi
+  }
+  pkg_manager() {
+    if command -v pacman >/dev/null 2>&1; then echo pacman
+    elif command -v dpkg-query >/dev/null 2>&1; then echo apt
+    else echo none
+    fi
+  }
+  cmdline_backend() {
+    if command -v limine-update >/dev/null 2>&1 ||
+       command -v limine-mkinitcpio >/dev/null 2>&1; then echo limine
+    elif command -v kernelstub >/dev/null 2>&1; then echo kernelstub
+    elif [[ -f /etc/default/grub ]] &&
+         { command -v update-grub >/dev/null 2>&1 ||
+           command -v grub-mkconfig >/dev/null 2>&1; }; then echo grub
+    else echo none
+    fi
+  }
+fi
 
 printf '%sasus-expertbook-linux — hardware compatibility probe%s\n\n' "$c_bold" "$c_off"
 
@@ -214,13 +263,23 @@ echo
 
 # 11) Distro
 printf '%sDistro%s\n' "$c_bold" "$c_off"
-if [[ -f /etc/arch-release ]]; then
-  ok "Arch (or derivative) — patcher's pacman + paths assumed correct"
-elif command -v pacman >/dev/null 2>&1; then
-  ok "$(awk -F= '/^PRETTY_NAME=/{gsub(/"/,""); print $2}' /etc/os-release 2>/dev/null) — pacman present"
-else
-  warn "non-pacman distro — modules' files still apply, but intel-perf-fix's package install will need adapting"
-fi
+pretty="$(awk -F= '/^PRETTY_NAME=/{gsub(/"/,""); print $2}' /etc/os-release 2>/dev/null)"
+case "$(distro_family)" in
+  arch)
+    ok "${pretty:-Arch (or derivative)} — pacman; every module is supported here"
+    ;;
+  debian)
+    ok "${pretty:-Debian (or derivative)} — apt/dpkg"
+    note "supported so far: intel-perf-fix, plus every module that only ships"
+    note "files and units (touchpad-fix, wifi-fix, keyboard-backlight-auto)."
+    note "The rest still assume Arch — see issue #4 for the port status."
+    ;;
+  *)
+    warn "${pretty:-unknown distribution} — no supported package manager detected"
+    note "file-only modules still apply; anything that installs packages will not"
+    ;;
+esac
+note "package manager: $(pkg_manager)    boot parameters: $(cmdline_backend)"
 echo
 
 # Summary
@@ -229,10 +288,28 @@ all_pass=1
 [[ "$cpu" == *"Core(TM) Ultra"* ]] || all_pass=0
 
 if (( all_pass == 1 )); then
-  printf '%sResult: install-all is appropriate for this hardware.%s\n' "$c_ok" "$c_off"
+  # install-all is not harmless outside Arch. webcam-ai-fix declares no
+  # module_install, so mod_install_files runs whatever the distro: it drops
+  # /etc/modules-load.d/v4l2loopback.conf for a module Debian does not package,
+  # leaving systemd-modules-load to fail at every boot, and its post-install
+  # adds the invoking user to the render group. So name the ported modules here
+  # rather than claim the Arch-only ones do nothing.
+  if [[ "$(distro_family)" == arch ]]; then
+    install_cmd='./patch.sh install-all'
+    printf '%sResult: install-all is appropriate for this hardware.%s\n' "$c_ok" "$c_off"
+  else
+    install_cmd='./patch.sh install touchpad-fix wifi-fix keyboard-backlight-auto intel-perf-fix'
+    printf '%sResult: the hardware matches. Install the ported modules, not install-all.%s\n' \
+      "$c_ok" "$c_off"
+    printf '%sinstall-all would also run the Arch-only modules. webcam-ai-fix still\n' "$c_dim"
+    printf 'writes its modules-load.d and modprobe.d files and adds you to the render\n'
+    printf 'group, even though v4l2loopback-dkms and obs-backgroundremoval cannot be\n'
+    printf 'installed here. keyboard-backlight-fix is the harmless one: it skips itself\n'
+    printf 'on every distro, superseded by keyboard-backlight-auto.%s\n' "$c_off"
+  fi
   printf '\n  git clone https://github.com/burakgon/asus-expertbook-linux.git\n'
   printf '  cd asus-expertbook-linux\n'
-  printf '  ./patch.sh install-all\n'
+  printf '  %s\n' "$install_cmd"
   printf '  sudo reboot\n\n'
 else
   printf '%sResult: not a perfect match.%s Some modules may still help — pick à la carte\n' "$c_warn" "$c_off"

@@ -433,7 +433,8 @@ Camera firmware
   OK   ASUS 3009 / 10.1.2.3009 baseline satisfied (ESRT raw 479569)
 
 Distro
-  OK   Arch (or derivative) — patcher's pacman + paths assumed correct
+  OK   CachyOS Linux — pacman; every module is supported here
+  package manager: pacman    boot parameters: limine
 
 Result: install-all is appropriate for this hardware.</code></pre>
     </div>
@@ -1222,8 +1223,8 @@ cs35l56 sdw:0:2:01fa:3556:01:0: Tuning PID: 0x23134, SID: 0x470200, TID: 0x84b06
         </p>
         <p><strong>Packages installed (no payload files):</strong></p>
         <ul>
-          <li><code>thermald</code> (extra repo) — <code>thermald.service</code> enabled. Runs the OEM's adaptive thermal tables (supported on Panther Lake since 2.5.9). It can lower limits if a BIOS table is bad; since 2.5.12 it restores them when stopped, so an A/B test is easy.</li>
-          <li><code>intel-lpmd</code> (extra / cachyos repo, plain pacman) — <strong>opt-in</strong>: <code>sudo INTEL_PERF_LPMD=1 ./patch.sh install intel-perf-fix</code>. In low-power mode it confines system/user/machine.slice to the four LP-E CPUs, forces <code>intel_pstate</code> to active mode and moves the SoC power slider.</li>
+          <li><code>thermald</code> (Arch <code>extra</code>; Debian/Ubuntu <code>main</code>) — <code>thermald.service</code> enabled. Runs the OEM's adaptive thermal tables (supported on Panther Lake since 2.5.9). It can lower limits if a BIOS table is bad; since 2.5.12 it restores them when stopped, so an A/B test is easy.</li>
+          <li><code>intel-lpmd</code> (Arch <code>extra</code>/<code>cachyos</code>; Ubuntu <code>universe</code>, not in Debian) — <strong>opt-in</strong>: <code>sudo INTEL_PERF_LPMD=1 ./patch.sh install intel-perf-fix</code>. In low-power mode it confines system/user/machine.slice to the four LP-E CPUs, forces <code>intel_pstate</code> to active mode and moves the SoC power slider.</li>
         </ul>
         <p>
           Version 1.2 stopped enabling <code>intel-lpmd</code> by default.
@@ -1235,6 +1236,16 @@ cs35l56 sdw:0:2:01fa:3556:01:0: Tuning PID: 0x23134, SID: 0x470200, TID: 0x84b06
           pools to four CPUs. Updating from 1.1 disables the service unless
           <code>INTEL_PERF_LPMD=1</code> is set. The earlier LP-E-parking and
           idle-wattage claims were never measured on this laptop.
+        </p>
+        <p>
+          This is the first module ported off <code>pacman</code>: package and
+          service calls go through <code>lib/distro.sh</code>, so the same hook
+          runs on apt systems too. On Debian and Ubuntu only the
+          <code>thermald</code> half is useful for now: Debian has no
+          <code>intel-lpmd</code> package, and Ubuntu 24.04 ships 0.0.3
+          (February 2024), which predates Panther Lake and exits within
+          milliseconds of starting. The module reports that rather than
+          leaving a daemon that looks enabled but is dead.
         </p>
         <p>
           <code>power-profiles-daemon</code> stays in charge of profiles.
@@ -1649,6 +1660,18 @@ EC set level 0/3 | manual override active for 0.0-18.4 lux (reading 9.2)</code><
         discoverable module. The patcher records the installed version
         under <code>/var/lib/asus_expertboot_patcher/</code> so subsequent
         operations know whether each module needs an update.
+      </p>
+      <p class="sub">
+        <strong>Distros.</strong> Arch and its derivatives (CachyOS,
+        EndeavourOS, Manjaro) are the reference platform and run every module.
+        Debian, Ubuntu and Pop!_OS are supported incrementally:
+        <code>lib/distro.sh</code> abstracts the package manager, kernel-header
+        discovery, initramfs regeneration, kernel-cmdline backend
+        (Limine / kernelstub / GRUB) and service enablement, and modules are
+        being moved onto it one at a time. Working there today:
+        <code>touchpad-fix</code>, <code>wifi-fix</code> (config files only)
+        and <code>intel-perf-fix</code>. Progress is tracked in
+        <a href="https://github.com/burakgon/asus-expertbook-linux/issues/4">issue&nbsp;#4</a>.
       </p>
 
       <div class="grid grid-2">
