@@ -101,6 +101,28 @@ drm-intel-next for 7.4).
 - **Local replacement:** `power-profile-bridge` (starts the daemon with
   `--block-driver=platform_profile`).
 
+### `0006-platform-x86-asus-wmi-Add-keyboard-backlight-read-b.patch`
+
+- **Author:** Sercan Gökmen ([#12](https://github.com/burakgon/asus-expertbook-linux/pull/12))
+- **Tree:** `torvalds/linux` → `drivers/platform/x86/asus-wmi.{c,h}`,
+  `drivers/platform/x86/asus-nb-wmi.c`
+- **Where to send:** `platform-driver-x86@vger.kernel.org` (see `MAINTAINERS`,
+  "ASUS NOTEBOOKS AND EEEPC ACPI/WMI EXTRAS DRIVERS").
+- **Applies to:** master `df2908090cda`, v7.2.3 and pdx86 `for-next`
+  (2026-09-29, with an offset).
+- **What it does:** adds a `kbd_led_no_readback` quirk and a DMI entry for the
+  B9406CAA, so `kbd_led_get()` returns the driver's cached keyboard backlight
+  level instead of overwriting it with the constant 0 the firmware query
+  returns on this board. That 0 is why the KDE slider, UPower and
+  `brightnessctl` read 0, why `systemd-backlight` restores a dark keyboard,
+  and why the first Fn press after any read gives level 1.
+- **Status:** not sent. The DKMS overlay from #12 (a patched copy of the whole
+  `asus-wmi`/`asus-nb-wmi` per kernel series) is not shipped here: it would
+  replace the platform driver that fan profiles, charge limits and
+  `power-profile-bridge` depend on with a snapshot of one stable release.
+- **Local replacement:** none; `keyboard-backlight-auto` only writes the LED
+  and does not need the read-back.
+
 ## Drafts for other trackers
 
 - [`libdisplay-info-displayid2-oob.md`](libdisplay-info-displayid2-oob.md):
