@@ -13,6 +13,13 @@ Thumbs.db
 *.o
 *.so
 *.zst.tmp
+*.ko
+*.mod
+*.mod.c
+.*.cmd
+Module.symvers
+modules.order
+.tmp_versions/
 
 # Python bytecode
 __pycache__/

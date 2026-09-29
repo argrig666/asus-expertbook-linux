@@ -33,7 +33,7 @@ curl -fsSL https://raw.githubusercontent.com/burakgon/asus-expertbook-linux/main
 
 | Check | Expected | Why it matters |
 |---|---|---|
-| Laptop model (DMI) | `ASUS EXPERTBOOK B9406CAA` | All fixes are scoped to this exact subsystem ID |
+| Laptop model (DMI) | `ASUS EXPERTBOOK B9406CAA` | The fixes are written and tested for this model; the firmware, DKMS and HID modules refuse other hardware |
 | CPU family | Intel Core Ultra Series 3 (Panther Lake) | Required for the `xe` driver / `iwlmld` paths |
 | Touchpad | PixArt I²C-HID `093A:4F05` (ACPI `ASCP1D80`) | The pressure-axis quirk applies here |
 | Audio codec | Cirrus `CS42L43` + 2× `CS35L56` (subsystem `1043:15e4`) | Per-OEM speaker firmware needed |
@@ -798,7 +798,7 @@ there; 0.4.0 does but changes the soname. The module builds 0.3.0 from its
 pinned release tarball with the seven upstream DisplayID 2.0 commits, three
 upstream hardening fixes, and two fixes of our own for an out-of-bounds read
 and a leak those upstream commits still carry (found by fuzzing under
-AddressSanitizer; both offered upstream). It keeps the `.so.3` ABI (all
+AddressSanitizer; both drafted for upstream, not yet sent). It keeps the `.so.3` ABI (all
 packaged symbols exported, upstream tests 64/64 also under ASan), installs the
 library under `/usr/local/lib/asus-expertbook-hdr` and puts that directory in
 `/etc/ld.so.conf.d`. No pacman file is touched. It only builds against package
@@ -855,7 +855,7 @@ operations know whether each module is `up to date`, `update available`,
 | `./patch.sh install [module…]` | Idempotent install. Re-running applies any source updates. |
 | `./patch.sh update [module…]` | Alias for install. |
 | `./patch.sh uninstall [module…]` | Remove files + run uninstall hook. |
-| `./patch.sh diff [module…]` | Show what would change before installing. |
+| `./patch.sh diff [module…]` | Show what would change in the module's shipped files before installing. Packages, DKMS builds, firmware downloads and files written by install hooks are not part of the diff. |
 | `./patch.sh install-all` | Install every discoverable module; camera firmware is only offered when older and still asks for confirmation. |
 | `./patch.sh update-all` | Re-install only modules that aren't `up to date`. |
 | `./patch.sh uninstall-all` | Tear down installed configuration modules; applied device firmware is not downgraded. |
@@ -973,7 +973,7 @@ pending and retired work:
 | `0003` | libinput | `touchpad-fix`'s override: marks `093A:4F05` as a pressure pad (`INPUT_PROP_PRESSUREPAD`), as upstream did for `4811`. Not sent: needs an on-device test |
 | `0004` | Linux SoundWire | **Accepted** as upstream commit `90af3209742d` (Linux 7.3); retained for backports, stable request for 7.2.y drafted |
 | `0005` | power-profiles-daemon | `power-profile-bridge`'s drop-in: stops an emulated power-saver from switching itself back to balanced. Not sent; its new test fails on main and the suite passes with it |
-| drafts | drm/xe, libdisplay-info, Arch | The drm/xe issue for `0001`, a confidential libdisplay-info report for the DisplayID v2 overread fixed in `hdr-fix`, and a request for Arch to ship libdisplay-info 0.4.0 |
+| drafts | drm/xe, libdisplay-info, Arch | The drm/xe issue for `0001`, a libdisplay-info report for the DisplayID v2 overread fixed in `hdr-fix`, and a request for Arch to ship libdisplay-info 0.4.0 |
 
 See the tracking notes for current applicability against `torvalds/linux` /
 `drm-intel-next` / libinput main. See
@@ -1037,8 +1037,11 @@ here, faster in practice than the flaky EHT link. Drop the module (or set
 The HiFi UCM (active since `audio-fix v2.0.0`, and upstream in
 `alsa-ucm-conf 1.2.16`) drives the **mic-mute** LED (`platform::micmute`)
 correctly. The **speaker-mute** LED (F1) stays in its EC default state
-because this laptop exposes no speaker-mute LED device to Linux at all —
-there's nothing for the UCM `SetLED` hook to bind to. It's a
+before Linux 7.4, because until then this laptop exposes no speaker-mute LED
+device to Linux — there's nothing for the UCM `SetLED` hook to bind to.
+Linux 7.4's `asus-wmi` adds `platform::mute` (WMI device `0x0004001C`) with an
+audio-mute trigger. A bridge for older kernels is under review in
+[#16](https://github.com/burakgon/asus-expertbook-linux/pull/16). It's a
 missing-device limitation, not a profile issue.
 
 </details>
@@ -1057,7 +1060,7 @@ remains a safe bridge for ASUS's Windows-packaged firmware capsule.
 <details><summary><b>How do I test changes before installing?</b></summary>
 
 ```sh
-./patch.sh diff <module>          # show before/after on every file the module manages
+./patch.sh diff <module>          # before/after for the files in the module's MODULE_FILES
 ```
 
 Output marks each file as `unchanged` / `would update` / `would create`

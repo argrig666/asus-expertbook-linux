@@ -1,10 +1,13 @@
 # Draft: libdisplay-info — out-of-bounds read and leak in DisplayID v2 data-block parsing
 
 This is a memory-safety bug in a library that compositors run on EDIDs from
-any connected display. Report it as a **confidential issue** first at
-<https://gitlab.freedesktop.org/emersion/libdisplay-info/-/issues/new>
-(tick "This issue is confidential"), attach the two patches, and let the
-maintainer decide how to publish.
+any connected display. This draft, with its reproducer, and the fixes in
+`hdr-fix/patches/` have been public in this repository since 2026-09-28, so a
+confidential report no longer buys anything: file it as a normal issue at
+<https://gitlab.freedesktop.org/emersion/libdisplay-info/-/issues/new> or open
+a merge request with the two patches, soon, and say that the details are
+already public. The overread is one byte past a heap buffer on a crafted,
+checksum-valid EDID, reached when a compositor parses a connected display.
 
 Patches (apply with `git am -3` to main `62a9346`; all 69 tests pass):
 

@@ -24,4 +24,15 @@ The patches in hdr-fix/patches/ apply to the libdisplay-info 0.3.0 release
 4713505, 7324cca, 73ab82d, 73ec53d, 8057b29, 76f133a, and cb5e3ed ported to the
 0.3.0 layout), backported unchanged apart from dropping two test-data files
 that 0.3.0 does not contain. 0008-0009 are fixes written for this repository
-and offered upstream under the same MIT license.
+and intended for upstream under the same MIT license.
+
+Kernel sources
+--------------
+
+audio-fix/dkms/asus-expertbook-sof-sdw-*/ is derived from Linux
+sound/soc/intel/boards/ and include headers. Those files are GPL-2.0-only,
+as their SPDX lines state, and are NOT covered by this repository's MIT
+license; the GPL-2.0 text is at https://www.gnu.org/licenses/old-licenses/gpl-2.0.txt
+and in the Linux source tree (LICENSES/preferred/GPL-2.0). The patches in
+upstream-patches/ against Linux are offered under the licence of the files
+they change.
