@@ -18,9 +18,12 @@ die()   { fail "$*"; exit 1; }
 # uses lib/distro.sh itself; the README also documents this script as a
 # `curl | bash` one-liner, where that file is not on disk, so the three probes
 # it needs have a self-contained fallback below.
-SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
+SCRIPT_DIR=""
+if [[ -n ${BASH_SOURCE[0]:-} && -f ${BASH_SOURCE[0]} ]]; then
+  SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
+fi
 # shellcheck source=../lib/distro.sh
-[[ -f "$SCRIPT_DIR/../lib/distro.sh" ]] && source "$SCRIPT_DIR/../lib/distro.sh"
+[[ -n $SCRIPT_DIR && -f "$SCRIPT_DIR/../lib/distro.sh" ]] && source "$SCRIPT_DIR/../lib/distro.sh"
 
 if ! declare -F distro_family >/dev/null; then
   distro_family() {

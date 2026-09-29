@@ -33,7 +33,7 @@ curl -fsSL https://raw.githubusercontent.com/burakgon/asus-expertbook-linux/main
 
 | Check | Expected | Why it matters |
 |---|---|---|
-| Laptop model (DMI) | `ASUS EXPERTBOOK B9406CAA` | The fixes are written and tested for this model; the firmware, DKMS and HID modules refuse other hardware |
+| Laptop model (DMI) | `ASUS EXPERTBOOK B9406CAA` | The fixes are written and tested for this model. `ish-firmware`, `camera-firmware` and `touchpad-haptics` refuse other hardware, and the audio overlay's quirk only matches this board's DMI |
 | CPU family | Intel Core Ultra Series 3 (Panther Lake) | Required for the `xe` driver / `iwlmld` paths |
 | Touchpad | PixArt I²C-HID `093A:4F05` (ACPI `ASCP1D80`) | The pressure-axis quirk applies here |
 | Audio codec | Cirrus `CS42L43` + 2× `CS35L56` (subsystem `1043:15e4`) | Per-OEM speaker firmware needed |
@@ -539,8 +539,9 @@ Package and service calls go through `lib/distro.sh`, so the hook also runs on
 apt systems. On Debian and Ubuntu only the thermald half is useful for now:
 Debian has no `intel-lpmd` package, and Ubuntu 24.04's 0.0.3 (February 2024)
 predates Panther Lake and exits within milliseconds of starting (verified on
-Pop!_OS 24.04). With `INTEL_PERF_LPMD=1` the module reports that instead of
-leaving a unit that looks enabled but is dead.
+Pop!_OS 24.04). With `INTEL_PERF_LPMD=1` the module warns when the enabled unit
+is not running and points at its journal; the unit stays enabled so a package
+upgrade that adds support starts it.
 
 Version 1.2 stopped enabling `intel-lpmd` by default. Intel labels 0.1.1 (the
 CachyOS build) a test release not meant for distributions, and upstream main
@@ -886,10 +887,10 @@ operations know whether each module is `up to date`, `update available`,
 
   | Module | Debian/Ubuntu | Note |
   |---|---|---|
-  | `touchpad-fix` | works | config files only, nothing distro-specific |
+  | `touchpad-fix` | works | config files only; needs `libinput-tools` for the `libinput quirks validate` check |
   | `wifi-fix` | works | config files only |
   | `keyboard-backlight-auto` | works | config files plus a python3 daemon and its unit; no package manager involved |
-  | `intel-perf-fix` | partial | `thermald` works. `intel-lpmd` is absent on Debian and, on Ubuntu 24.04, too old (0.0.3) to recognise Panther Lake — it installs and exits at once. Both cases are reported, not hidden |
+  | `intel-perf-fix` | partial | `thermald` works (Ubuntu 24.04's `2.5.6-2ubuntu0.24.04.3` carries the Panther Lake backport). `intel-lpmd` is absent on Debian and, on Ubuntu 24.04, too old (0.0.3) to recognise Panther Lake — it installs and exits at once. Both cases are reported, not hidden |
   | `display-fix` | not yet | needs the cmdline backend wired into the module |
   | `audio-fix` | not yet | Measured on Pop!_OS 24.04 against an earlier version. Fixed since: `dkms.conf` no longer forces `LLVM=1` (3.1.1), and overlay 3.0.2 is limited to 6.x–7.2 kernels and keeps going when one kernel fails to build. Still open: `audio_require_build_tools` installs `clang`, which GCC-built Debian kernels do not need; the bundled UCM files declare Syntax 7, which needs alsa-lib >= 1.2.12 (Ubuntu 24.04 ships 1.2.11), so installing them breaks UCM for the whole `sof-soundwire` family; the `NoExtract` pin maps to `dpkg-divert`; firmware ownership checks use `pacman -Qo` |
   | `camera-firmware` | not yet | needs `fwupd`, `jq`, `7z`, `curl` mapped to Debian names |

@@ -1244,8 +1244,9 @@ cs35l56 sdw:0:2:01fa:3556:01:0: Tuning PID: 0x23134, SID: 0x470200, TID: 0x84b06
           <code>thermald</code> half is useful for now: Debian has no
           <code>intel-lpmd</code> package, and Ubuntu 24.04 ships 0.0.3
           (February 2024), which predates Panther Lake and exits within
-          milliseconds of starting. The module reports that rather than
-          leaving a daemon that looks enabled but is dead.
+          milliseconds of starting. With <code>INTEL_PERF_LPMD=1</code> the
+          module warns when the enabled unit is not running and points at its
+          journal.
         </p>
         <p>
           <code>power-profiles-daemon</code> stays in charge of profiles.

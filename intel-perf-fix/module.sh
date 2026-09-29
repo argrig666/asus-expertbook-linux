@@ -74,9 +74,16 @@ module_post_install() {
 
   echo
   if [[ ${INTEL_PERF_LPMD:-0} == 1 ]]; then
-    if ! pkg_installed intel-lpmd && ! pkg_available intel-lpmd; then
-      warn "[intel-perf-fix] intel-lpmd is not packaged for this distribution; thermald alone stays"
-      return 0
+    # Debian has no intel-lpmd package; skip only when apt confirms that, and
+    # let every other failure stop the install. pacman just tries.
+    if [[ $(pkg_manager) == apt ]] && ! pkg_installed intel-lpmd; then
+      local policy
+      policy="$(LC_ALL=C apt-cache policy intel-lpmd 2>&1)" ||
+        die "[intel-perf-fix] apt-cache failed: $policy"
+      if ! grep -Eq '^ *Candidate: [^(]' <<<"$policy"; then
+        warn "[intel-perf-fix] intel-lpmd is not packaged for this distribution; thermald alone stays"
+        return 0
+      fi
     fi
     echo "  installing intel-lpmd (INTEL_PERF_LPMD=1)"
     pkg_install intel-lpmd 2>&1 | tail -3 ||
@@ -88,10 +95,10 @@ module_post_install() {
     # intel_lpmd exits at once, without logging why, on a CPU model it
     # predates (Ubuntu 24.04's 0.0.3 on Panther Lake).
     if ! svc_is_active "$unit"; then
-      warn "[intel-perf-fix] $unit is enabled but not running"
-      echo "  intel-lpmd $(pkg_version intel-lpmd) exits on CPU models it does not recognise;"
-      echo "  Panther Lake needs a newer release. The unit stays enabled, so a later"
-      echo "  package upgrade starts working without re-running this module."
+      warn "[intel-perf-fix] $unit is enabled but not running; see: journalctl -u $unit"
+      echo "  An intel-lpmd older than this CPU exits at start (Ubuntu 24.04's 0.0.3 does"
+      echo "  on Panther Lake). The unit stays enabled, so a package upgrade that adds"
+      echo "  support starts it without re-running this module."
     fi
   else
     unit="$(_ipf_lpmd_unit)"
@@ -153,8 +160,8 @@ module_status_extra() {
     if [[ $s == active ]]; then
       printf '  %-22s %sactive (opt-in; %s)%s\n' "$svc" "$c_dim" "$version" "$c_off"
     elif systemctl is-enabled --quiet "$svc" 2>/dev/null; then
-      printf '  %-22s %senabled but exits at startup (%s may predate this CPU)%s\n' \
-        "$svc" "$c_warn" "$version" "$c_off"
+      printf '  %-22s %senabled but not running (%s; see journalctl -u %s)%s\n' \
+        "$svc" "$c_warn" "$version" "$svc" "$c_off"
     else
       printf '  %-22s %s%s (opt-in, off by default)%s\n' "$svc" "$c_dim" "${s:-inactive}" "$c_off"
     fi
