@@ -15,7 +15,7 @@
 
 MODULE_NAME="touchpad-fix"
 MODULE_DESC="ASUS ExpertBook Ultra (B9406CAA) PixArt 093A:4F05 touchpad workaround"
-MODULE_VERSION="1.2.0"
+MODULE_VERSION="1.2.1"
 
 # The libinput quirk is the load-bearing fix; the hwdb clamp is optional
 # belt-and-suspenders (verified: quirk alone stops the Touch-jumps even with
@@ -224,11 +224,12 @@ module_status_extra() {
     return 0
   fi
 
-  # Listing active quirks opens the device node, which needs root.
+  # Try the current user's access first (e.g. input group/session ACLs).
+  # Requiring EUID=0 hid valid results on machines where this already works.
   local out
-  if [[ $EUID -eq 0 ]]; then
-    out="$(libinput quirks list "/dev/input/$ev" 2>/dev/null || true)"
-  elif sudo -n true 2>/dev/null; then
+  if out="$(libinput quirks list "/dev/input/$ev" 2>/dev/null)"; then
+    :
+  elif [[ $EUID -ne 0 ]] && sudo -n true 2>/dev/null; then
     out="$(sudo -n libinput quirks list "/dev/input/$ev" 2>/dev/null || true)"
   else
     printf '  libinput: %srun status as root to list the active quirks%s\n' "$c_dim" "$c_off"

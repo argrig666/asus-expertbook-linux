@@ -68,7 +68,7 @@
 
 MODULE_NAME="keyboard-backlight-auto"
 MODULE_DESC="Drive the keyboard backlight from the ambient light sensor (Windows 11 ALR curve)"
-MODULE_VERSION="1.2.0"
+MODULE_VERSION="1.3.0"
 
 MODULE_FILES=(
   "kbd-backlight-auto:/usr/local/bin/kbd-backlight-auto"
@@ -93,7 +93,9 @@ module_post_install() {
   fi
 
   systemctl daemon-reload
-  systemctl enable --now kbd-backlight-auto.service
+  systemctl enable kbd-backlight-auto.service
+  # enable --now leaves an already-running process on its old Python code.
+  systemctl restart kbd-backlight-auto.service
 
   echo
   echo "Done. The keyboard backlight now follows the ambient light sensor."
@@ -112,12 +114,24 @@ module_post_uninstall() {
 }
 
 module_status_extra() {
-  local state
+  local state pid cpu
   state="$(systemctl is-active kbd-backlight-auto.service 2>/dev/null || true)"
   case "$state" in
     active) printf '  service:               %sactive%s\n' "$c_ok" "$c_off" ;;
     *)      printf '  service:               %s%s%s\n' "$c_warn" "${state:-unknown}" "$c_off" ;;
   esac
+
+  pid="$(systemctl show -p MainPID --value kbd-backlight-auto.service 2>/dev/null || true)"
+  if [[ $pid =~ ^[1-9][0-9]*$ ]]; then
+    cpu="$(LC_ALL=C ps -p "$pid" -o pcpu= 2>/dev/null | tr -d ' ' || true)"
+    if [[ $cpu =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+      if awk -v cpu="$cpu" 'BEGIN {exit !(cpu >= 10)}'; then
+        printf '  CPU lifetime average:  %s%s%% of one CPU — unusually high; update/restart the daemon%s\n' "$c_warn" "$cpu" "$c_off"
+      else
+        printf '  CPU lifetime average:  %s%s%% of one CPU%s\n' "$c_ok" "$cpu" "$c_off"
+      fi
+    fi
+  fi
 
   if systemctl is-enabled --quiet kbd-backlight-auto.service 2>/dev/null; then
     printf '  start at boot:         %senabled%s\n' "$c_ok" "$c_off"

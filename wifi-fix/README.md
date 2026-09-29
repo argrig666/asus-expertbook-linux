@@ -42,7 +42,8 @@ the same AP there, and with its background scanning off, before blaming C106.
 
 - whether EHT is disabled;
 - the loaded firmware build;
-- the current-boot warning count;
+- the current-boot warning count and warnings in the last fifteen minutes
+  (since 2.1.1, older messages are identified as historical);
 - current frequency and signal.
 
 The module does not suppress kernel warnings or rename packaged firmware files.

@@ -70,6 +70,19 @@ keeps whichever it entered from.
 
 ## What this module adds on top
 
+### Device reconnects (1.3.0)
+
+Disconnected input devices are removed from the event loop and replacements
+are discovered every five seconds. This includes virtual keyboards restarted
+by tools such as ydotool. Older versions kept polling the deleted device,
+which returned `POLLERR|POLLHUP` and `ENODEV` continuously and could burn a CPU
+core. Lid handling falls back to `/proc/acpi` while its input device is gone.
+Normal `POLLPRI|POLLERR` notifications from `brightness_hw_changed` still
+deliver Fn-key overrides. Reinstalling the module now restarts the daemon so
+the updated code takes effect immediately.
+
+Regression tests: `python3 -m unittest discover -s tests -v`.
+
 ### Manual override (Fn keys)
 
 Straight from Microsoft's spec: pressing a backlight key creates a temporary

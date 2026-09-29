@@ -37,7 +37,7 @@
 
 MODULE_NAME="wifi-fix"
 MODULE_DESC="B9406CAA Intel BE211: disable broken EHT and diagnose C106 beacon warnings"
-MODULE_VERSION="2.1.0"
+MODULE_VERSION="2.1.1"
 
 MODULE_FILES=(
   "iwlwifi-disable-eht.conf:/etc/modprobe.d/iwlwifi-disable-eht.conf"
@@ -75,7 +75,7 @@ module_post_uninstall() {
 }
 
 module_status_extra() {
-  local iface="" link_summary="" eht="" fw="" missed="0" kmsg=""
+  local iface="" link_summary="" eht="" fw="" missed="0" recent="0" kmsg=""
 
   # Core fix: is 802.11be (EHT) disabled? This is the indicator that the
   # actual BE211 bug is worked around. Y = EHT off -> stable Wi-Fi 6 fallback.
@@ -95,8 +95,16 @@ module_status_extra() {
   [[ -n $fw ]] && printf '  firmware: %s\n' "$fw"
   missed="$(grep -c 'missed beacons exceeds threshold, but receiving data' <<<"$kmsg" || true)"
   if [[ $missed =~ ^[0-9]+$ ]] && (( missed > 0 )); then
-    printf '  beacons:  %s%s warnings this boot; driver reports data is still arriving and stays connected%s\n' \
-      "$c_warn" "$missed" "$c_off"
+    if recent="$(journalctl -k -b 0 --since '-15 min' --no-pager 2>/dev/null)"; then
+      recent="$(grep -c 'missed beacons exceeds threshold, but receiving data' <<<"$recent" || true)"
+      if [[ $recent == 0 ]]; then
+        printf '  beacons:  %s%s earlier warnings this boot; none in the last 15 minutes%s\n' "$c_dim" "$missed" "$c_off"
+      else
+        printf '  beacons:  %s%s warnings this boot, %s in the last 15 minutes; driver stays connected while receiving data%s\n' "$c_warn" "$missed" "$recent" "$c_off"
+      fi
+    else
+      printf '  beacons:  %s%s warnings this boot; recent journal unavailable%s\n' "$c_warn" "$missed" "$c_off"
+    fi
   else
     printf '  beacons:  %sno missed-beacon warning this boot%s\n' "$c_ok" "$c_off"
   fi

@@ -755,15 +755,15 @@ sudo reboot</code></pre>
   2   camera-firmware           3009       3009       up to date     Verified camera UEFI capsule
   3   display-fix               1.4.0      1.4.0      up to date     PSR1 self-refresh + DPCD brightness
   4   hdr-fix                   1.0.0      1.0.0      up to date     DisplayID 2.0 HDR metadata for KWin
-  5   intel-perf-fix            1.2.0      1.2.0      up to date     thermald (+ opt-in intel-lpmd)
+  5   intel-perf-fix            1.3.0      1.3.0      up to date     thermald (+ opt-in intel-lpmd)
   6   ish-firmware              5.8.1.7783 5.8.1.7783 up to date     ASUS Sensor Hub image (ambient light)
-  7   keyboard-backlight-auto   1.2.0      1.2.0      up to date     Ambient-light keyboard backlight
+  7   keyboard-backlight-auto   1.3.0      1.3.0      up to date     Ambient-light keyboard backlight
   8   keyboard-backlight-fix    2.0.0      -          not installed  (superseded) asusd workaround
   9   power-profile-bridge      1.0.0      1.0.0      up to date     Power-saver → SoC low-power + quiet fans
-  10  touchpad-fix              1.2.0      1.2.0      up to date     PixArt 093A:4F05 pressure quirk
+  10  touchpad-fix              1.2.1      1.2.1      up to date     PixArt 093A:4F05 pressure quirk
   11  touchpad-haptics          1.0.0      1.0.0      up to date     Click force + haptic intensity
   12  webcam-ai-fix             1.1.0      1.1.0      up to date     OBS CPU background blur
-  13  wifi-fix                  2.1.0      2.1.0      up to date     BE211: EHT fallback + beacon diagnostics
+  13  wifi-fix                  2.1.1      2.1.1      up to date     BE211: EHT fallback + beacon diagnostics
 
 Actions
   i &lt;num&gt;    install / update module
@@ -819,7 +819,7 @@ Actions
           </tr>
           <tr>
             <td><a href="https://github.com/burakgon/asus-expertbook-linux/tree/main/intel-perf-fix"><code>intel-perf-fix</code></a></td>
-            <td><span class="mono">1.2.0</span></td>
+            <td><span class="mono">1.3.0</span></td>
             <td>Panther Lake thermal policy — thermald runs the OEM's adaptive tables; intel-lpmd opt-in</td>
           </tr>
           <tr>
@@ -829,7 +829,7 @@ Actions
           </tr>
           <tr>
             <td><a href="https://github.com/burakgon/asus-expertbook-linux/tree/main/keyboard-backlight-auto"><code>keyboard-backlight-auto</code></a></td>
-            <td><span class="mono">1.2.0</span></td>
+            <td><span class="mono">1.3.0</span></td>
             <td><em>(optional)</em> Keyboard backlight follows the ambient light sensor, using Windows 11's documented ALR curve; off with the lid shut</td>
           </tr>
           <tr>
@@ -844,7 +844,7 @@ Actions
           </tr>
           <tr>
             <td><a href="https://github.com/burakgon/asus-expertbook-linux/tree/main/touchpad-fix"><code>touchpad-fix</code></a></td>
-            <td><span class="mono">1.2.0</span></td>
+            <td><span class="mono">1.2.1</span></td>
             <td>PixArt 093A:4F05 haptic pad — pressure-axis clamp + libinput quirk, written as a managed block in <code>local-overrides.quirks</code></td>
           </tr>
           <tr>
@@ -859,7 +859,7 @@ Actions
           </tr>
           <tr>
             <td><a href="https://github.com/burakgon/asus-expertbook-linux/tree/main/wifi-fix"><code>wifi-fix</code></a></td>
-            <td><span class="mono">2.1.0</span></td>
+            <td><span class="mono">2.1.1</span></td>
             <td>BE211: disable broken 802.11be/EHT and diagnose Linux 7.2 <code>missed beacons</code> warnings without broad power/performance overrides</td>
           </tr>
         </tbody>
@@ -1458,6 +1458,11 @@ intel_ish_ipc 0000:00:12.0: ISH loader: cmd 2 failed 10</code></pre>
 
       <details>
         <summary><code>keyboard-backlight-auto</code> — <em>(optional)</em> keyboard backlight follows the ambient light sensor</summary>
+        <p>Version 1.3.0 closes disconnected input devices and discovers
+          replacements every five seconds, fixing excessive CPU usage after a
+          virtual keyboard disappears. Updates restart the daemon and status
+          reports its CPU average. See the
+          <a href="https://github.com/burakgon/asus-expertbook-linux/blob/main/docs/system-health.md">runtime health checks</a>.</p>
         <p>
           KDE PowerDevil reads the ambient light sensor for <strong>screen</strong>
           brightness only — there is no keyboard equivalent. Without this module

@@ -553,62 +553,122 @@ class Controller:
             log("%.1f lux | %s | level %d/%d" % (lux, why, level, self.backlight.max))
 
 
-def run(controller):
-    poller = select.poll()
-    fds = {}
+class EventMonitor:
+    """Drop disconnected devices and discover replacements without spinning.
 
-    def watch(path, mask):
+    evdev returns POLLERR|POLLHUP and ENODEV forever after a device disappears
+    (including a restarted virtual keyboard). Keeping that fd in poll burns a
+    core. sysfs is different: POLLERR accompanies normal POLLPRI notifications.
+    """
+
+    RESCAN_INTERVAL = 5.0
+
+    def __init__(self, backlight_base, lid_off):
+        self.poller = select.poll()
+        self.fds = {}
+        self.hw_path = os.path.join(backlight_base, "brightness_hw_changed")
+        self.lid_off = lid_off
+        self.next_scan = 0.0
+        self.failed_paths = set()
+
+    def watch(self, path, kind):
+        if any(path == item[0] for item in self.fds.values()):
+            return
+        fd = None
         try:
             fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+            mask = select.POLLIN
+            if kind == "hardware":
+                mask = select.POLLPRI | select.POLLERR
+                try:
+                    os.read(fd, 32)  # acknowledge the initial sysfs state
+                except OSError as exc:
+                    if exc.errno != errno.ENODATA:
+                        raise
+            self.poller.register(fd, mask)
         except OSError as exc:
-            log("cannot open %s: %s" % (path, exc))
-            return None
-        poller.register(fd, mask)
-        fds[fd] = path
-        return fd
+            if fd is not None:
+                os.close(fd)
+            if path not in self.failed_paths:
+                log("cannot watch %s: %s (will retry)" % (path, exc))
+                self.failed_paths.add(path)
+            return
+        self.failed_paths.discard(path)
+        self.fds[fd] = (path, kind)
+        log("watching %s for %s events" % (path, kind))
 
-    key_fds = set()
-    for dev in find_illum_key_devices():
-        fd = watch(dev["event"], select.POLLIN)
-        if fd is not None:
-            key_fds.add(fd)
-            log("watching %s (%s) for backlight Fn keys (secondary — this EC "
-                "sends no input event; brightness_hw_changed is the real one)"
-                % (dev["event"], dev.get("name", "?")))
-    if not key_fds:
-        log("no backlight Fn key device found")
-
-    # The primary manual-override signal. The Fn keys reach the OS this way on
-    # hardware whose EC swallows the keypress without emitting an input event -
-    # which is the case on this laptop. It also carries the real level.
-    hw_fd = None
-    hw_path = os.path.join(controller.backlight.base, "brightness_hw_changed")
-    if os.path.exists(hw_path):
+    def drop(self, fd):
+        path, _kind = self.fds.pop(fd)
+        self.poller.unregister(fd)
         try:
-            hw_fd = os.open(hw_path, os.O_RDONLY)
-            try:
-                os.read(hw_fd, 32)     # drain the initial state
-            except OSError:
-                pass                   # ENODATA until something changes
-            poller.register(hw_fd, select.POLLPRI | select.POLLERR)
-            fds[hw_fd] = hw_path
-            log("watching %s for EC-initiated changes" % hw_path)
+            os.close(fd)
         except OSError as exc:
-            log("cannot open %s: %s" % (hw_path, exc))
-            hw_fd = None
-    if hw_fd is None and not key_fds:
-        log("no manual-override signal available")
+            if exc.errno != errno.EBADF:
+                raise
+        log("disconnected %s; will rediscover" % path)
 
-    lid_fd = None
-    if controller.lid_off:
-        lid = find_lid_device()
-        if lid:
-            lid_fd = watch(lid["event"], select.POLLIN)
-        if lid_fd is not None:
-            log("watching %s (%s) for lid events"
-                % (lid["event"], lid.get("name", "?")))
-        else:
-            log("no readable lid switch device; falling back to /proc/acpi polling")
+    def scan(self):
+        now = time.monotonic()
+        if now < self.next_scan:
+            return
+        self.next_scan = now + self.RESCAN_INTERVAL
+        for dev in find_illum_key_devices():
+            self.watch(dev["event"], "key")
+        if os.path.exists(self.hw_path):
+            self.watch(self.hw_path, "hardware")
+        if self.lid_off:
+            lid = find_lid_device()
+            if lid:
+                self.watch(lid["event"], "lid")
+
+    def has_lid(self):
+        return any(kind == "lid" for _path, kind in self.fds.values())
+
+    def events(self, timeout):
+        # Round up: a sub-millisecond deadline must still let the CPU sleep.
+        ready = self.poller.poll(math.ceil(max(0.0, timeout) * 1000.0))
+        result = []
+        for fd, mask in ready:
+            _path, kind = self.fds[fd]
+            if mask & (select.POLLHUP | select.POLLNVAL) or (
+                    kind != "hardware" and mask & select.POLLERR):
+                self.drop(fd)
+                continue
+            try:
+                if kind == "hardware":
+                    os.lseek(fd, 0, os.SEEK_SET)
+                    value = int(os.read(fd, 32).decode().strip())
+                    result.append((kind, value))
+                    continue
+                data = os.read(fd, INPUT_EVENT.size * 64)
+            except OSError as exc:
+                if exc.errno not in (errno.EAGAIN, errno.EINTR):
+                    self.drop(fd)
+                continue
+            except (UnicodeDecodeError, ValueError):
+                self.drop(fd)
+                continue
+            if not data:
+                self.drop(fd)
+                continue
+            for offset in range(0, len(data) - INPUT_EVENT.size + 1,
+                                INPUT_EVENT.size):
+                _sec, _usec, etype, code, value = INPUT_EVENT.unpack_from(data, offset)
+                if kind == "key" and etype == EV_KEY and code in ILLUM_KEYS and value == 1:
+                    result.append((kind, value))
+                elif kind == "lid" and etype == EV_SW and code == SW_LID:
+                    result.append((kind, bool(value)))
+        return result
+
+    def close(self):
+        for fd in list(self.fds):
+            self.poller.unregister(fd)
+            os.close(fd)
+        self.fds.clear()
+
+
+def run(controller):
+    monitor = EventMonitor(controller.backlight.base, controller.lid_off)
 
     running = [True]
 
@@ -618,49 +678,38 @@ def run(controller):
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
 
-    next_tick = time.monotonic()
-    while running[0]:
-        timeout = max(0.0, next_tick - time.monotonic())
-        try:
-            events = poller.poll(timeout * 1000.0)
-        except OSError as exc:
-            if exc.errno == errno.EINTR:
-                continue
-            raise
-
-        for fd, _mask in events:
-            if fd == hw_fd:
-                try:
-                    os.lseek(fd, 0, os.SEEK_SET)
-                    level = int(os.read(fd, 32).decode().strip())
-                except (OSError, UnicodeDecodeError, ValueError):
-                    continue
-                controller.on_hw_changed(level)
-                continue
+    try:
+        next_tick = time.monotonic()
+        while running[0]:
+            monitor.scan()
+            timeout = min(next_tick, monitor.next_scan) - time.monotonic()
             try:
-                data = os.read(fd, INPUT_EVENT.size * 64)
-            except OSError:
-                continue
-            for offset in range(0, len(data) - INPUT_EVENT.size + 1,
-                                INPUT_EVENT.size):
-                _sec, _usec, etype, code, value = INPUT_EVENT.unpack_from(data, offset)
-                if fd in key_fds and etype == EV_KEY and code in ILLUM_KEYS and value == 1:
+                events = monitor.events(timeout)
+            except OSError as exc:
+                if exc.errno == errno.EINTR:
+                    continue
+                raise
+            for kind, value in events:
+                if kind == "hardware":
+                    controller.on_hw_changed(value)
+                elif kind == "key":
                     controller.on_illum_key()
-                elif fd == lid_fd and etype == EV_SW and code == SW_LID:
+                elif kind == "lid":
                     controller.lid_from_evdev = True
-                    controller.on_lid(bool(value))
+                    controller.on_lid(value)
 
-        now = time.monotonic()
-        if now >= next_tick:
-            if controller.lid_off and not controller.lid_from_evdev:
-                state = read_proc_lid_state()
-                if state is not None:
-                    controller.on_lid(state)
-            controller.step()
-            next_tick = now + controller.interval
-
-    for fd in fds:
-        os.close(fd)
+            now = time.monotonic()
+            if now >= next_tick:
+                if not monitor.has_lid():
+                    controller.lid_from_evdev = False
+                if controller.lid_off and not controller.lid_from_evdev:
+                    state = read_proc_lid_state()
+                    if state is not None:
+                        controller.on_lid(state)
+                controller.step()
+                next_tick = now + controller.interval
+    finally:
+        monitor.close()
 
 
 def print_status(cfg, controller):
