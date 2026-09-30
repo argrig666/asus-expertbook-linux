@@ -29,6 +29,7 @@ static struct led_classdev mute_led = {
 	.max_brightness = 1,
 	.brightness_set_blocking = mute_set,
 	.brightness_get = mute_get,
+	.default_trigger = "audio-mute",
 	.flags = LED_RETAIN_AT_SHUTDOWN,
 };
 

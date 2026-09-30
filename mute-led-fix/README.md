@@ -25,15 +25,21 @@ The firmware table used for this analysis was compared byte-for-byte against
 the running machine's DSDT. The speaker device ID is also named `SoundMuteLed`
 in [G-Helper's ASUS interface](https://github.com/seerge/g-helper/blob/main/app/AsusACPI.cs).
 
-The small GPL-2.0-only DKMS driver registers `platform::mute`, is restricted
-to this DMI product name, checks firmware presence, and refuses a conflicting
-LED name. It leaves the stock microphone driver in charge of F4.
+The small GPL-2.0-only DKMS driver registers `platform::mute` with
+`default_trigger = "audio-mute"`, the same trigger upstream uses. It is
+restricted to this DMI product name, checks firmware presence, and refuses a
+conflicting LED name. `BUILD_EXCLUSIVE_KERNEL` stops the build on 7.4 and
+later, where the native LED is queued. It leaves the stock microphone driver
+in charge of F4.
 
-Omarchy's microphone shortcut writes its LED, but other ways of changing mute
-can leave it stale. The unprivileged session service reconciles both LEDs once
-a second using `brightnessctl` and logind, without changing permissions or audio
-state. Readback is compared before writing. It retries after audio-server
-restarts and checks again after resume; suspend/resume has not been tested here.
+The unprivileged session service can reconcile speaker mute, microphone mute,
+or both, once a second, using `brightnessctl` and logind. It does not change
+permissions or audio state. Readback is compared before writing.
+
+`MUTE_LED_SPEAKER` and `MUTE_LED_MIC` are independent. Each is `auto`
+(default), `on`, or `off`. `auto` writes an LED only while its trigger is
+`none`, so the service does not fight the kernel `audio-mute` or
+`audio-micmute` trigger. Suspend/resume has not been tested with this service.
 
 ## Install
 
@@ -49,33 +55,46 @@ sudo pacman -S --needed dkms base-devel linux-headers python libpulse brightness
 
 Use your kernel's matching header package instead of `linux-headers` for LTS,
 Zen or CachyOS, and the matching LLVM toolchain for a Clang-built kernel.
-Only 7.2.3-arch1-3 has been built/tested for this module. DKMS's normal kernel
-build settings apply; compiler overrides can be supplied through DKMS config.
+Built and loaded on 7.2.3-arch1-3. Not built on 7.4 or newer. DKMS's normal
+kernel build settings apply; compiler overrides can be supplied through DKMS
+config.
 
 ```sh
 ./patch.sh install mute-led-fix
-# Run these as your desktop user, without sudo:
+```
+
+No reboot required on a kernel that still needs the bridge. The installer
+builds for the running kernel when that kernel is older than 7.4 and
+`platform::mute` is not already provided by another driver. A registered
+0.2 tree that differs from this checkout is not overwritten. DKMS version
+0.1, from the previous revision of this module, is removed first.
+
+The session service is not enabled by the installer. As your desktop user:
+
+```sh
 systemctl --user daemon-reload
 systemctl --user enable --now expertbook-mute-leds.service
 ```
 
-No reboot required. The installer builds for the running kernel; DKMS
-autoinstall handles future kernel installations with matching headers. If you
-also boot another already-installed kernel, install for it with
-`sudo dkms install b9406-mute-led/0.1 -k <kernel-release>` before using it.
+Force one LED from userspace, and leave the other to its kernel trigger, with
+a user drop-in:
 
-Disable another service managing these LEDs before enabling this one. If the
-desktop already handles F4 correctly, a second synchronizer may be unnecessary.
-The session service is explicitly enabled per user; `install-all` installs its
-files and the driver but does not enable it for every desktop account.
+```ini
+[Service]
+Environment=MUTE_LED_SPEAKER=on
+Environment=MUTE_LED_MIC=off
+```
+
+`on` writes the LED even when a kernel trigger is selected, which competes
+with that trigger. Prefer `auto` unless you have set the trigger to `none`.
 
 ### Which audio state is shown?
 
-On Omarchy, F1 follows `omarchy-audio-output-sink`, the same helper used by
-the volume/mute shortcut, so an EasyEffects DSP sink resolves to its physical
-output. On other desktops it follows `pactl get-default-sink`; automatic DSP
-passthrough resolution is specific to Omarchy. F4 follows the default audio
-source, matching Omarchy's microphone shortcut.
+When speaker sync is enabled, Omarchy uses `omarchy-audio-output-sink`, the
+same helper as the volume/mute shortcut, so an EasyEffects DSP sink resolves
+to its physical output. Other desktops use `pactl get-default-sink`. That
+helper is the only Omarchy-specific part. Microphone sync follows the default
+source.
 
 Virtual inputs such as EasyEffects and their underlying hardware can have
 separate mute states. F4 reports the default source's mute flag, not a guarantee
@@ -96,13 +115,15 @@ Press the usual speaker/microphone mute shortcuts and also change mute through
 your audio panel. The corresponding orange light should follow within about
 one second. No root password should be needed for normal operation.
 
-Verification performed on the reference machine:
+Verification performed on the reference machine (Omarchy, BIOS B9406CAA.312,
+Linux 7.2.3-arch1-3):
 
 - Built the DKMS driver against the running kernel, installed and loaded it.
 - Wrote each LED on/off as the desktop user and read both states back.
 - Deliberately desynchronized each LED without changing audio; the service
   restored the expected state automatically.
-- Laptop owner confirmed both physical F1 and F4 indicators work.
+- The laptop owner confirmed both physical F1 and F4 indicators.
+- No non-Omarchy desktop was tested. Suspend and resume were not tested.
 
 For contributors, run `python -m unittest discover -s mute-led-fix/tests` for
 the synchronizer's routing and write-suppression tests.
@@ -110,21 +131,22 @@ the synchronizer's routing and write-suppression tests.
 ## Uninstall
 
 ```sh
-# Desktop user, before removing the service file:
-systemctl --user disable --now expertbook-mute-leds.service
 ./patch.sh uninstall mute-led-fix
-systemctl --user daemon-reload
 ```
 
-The loaded LED driver remains until the next reboot; its boot entry, DKMS
-installation and sources are removed. The stock microphone driver stays intact.
+Uninstall disables and stops `expertbook-mute-leds.service` for each user
+with a running session, and removes that user's enablement links under both
+`graphical-session.target.wants` and `default.target.wants`. If a user is not
+logged in, the patcher prints the `systemctl --user disable --now` command
+instead of claiming the service was stopped. The loaded LED driver remains
+until the next reboot. DKMS 0.1 and 0.2 and their source trees are removed.
+The stock microphone driver stays intact.
 
 ## Upstream path
 
-This is a compatibility module, not an upstream kernel submission. The
-long-term kernel fix belongs in ASUS WMI's LED support. Once the installed
-kernel exposes `platform::mute` natively, this module should be removed;
-the installer skips when a different driver already supplies that name.
-The session synchronizer can then be retained separately if the desktop still
-does not drive the LEDs. No claim is made that a kernel patch is accepted or
-pending upstream.
+This is a bridge for kernels before 7.4. Upstream has queued `platform::mute`
+with an `audio-mute` default trigger for 7.4, so the DKMS module is not built
+there. If `platform::mute` already exists and this module did not create it,
+install still publishes the synchronizer and does not load the DKMS driver.
+No claim is made that the queued kernel patch is in a release this machine is
+running.

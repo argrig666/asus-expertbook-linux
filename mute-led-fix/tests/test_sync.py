@@ -10,6 +10,13 @@ spec.loader.exec_module(sync)
 
 
 class SyncTests(unittest.TestCase):
+    def setUp(self):
+        self._env = patch.dict(sync.os.environ, {"MUTE_LED_SPEAKER": "on", "MUTE_LED_MIC": "on"}, clear=False)
+        self._env.start()
+
+    def tearDown(self):
+        self._env.stop()
+
     def check_routing(self, omarchy):
         sink_query = (("omarchy-audio-output-sink",) if omarchy
                       else ("pactl", "get-default-sink"))
@@ -54,6 +61,38 @@ class SyncTests(unittest.TestCase):
             with self.assertRaises(subprocess.CalledProcessError):
                 sync.sync()
             update.assert_not_called()
+
+    def test_auto_skips_a_kernel_trigger_and_still_syncs_the_other_led(self):
+        sync.os.environ["MUTE_LED_SPEAKER"] = "auto"
+        sync.os.environ["MUTE_LED_MIC"] = "auto"
+        triggers = {
+            "platform::mute": "none [audio-mute] timer",
+            "platform::micmute": "[none] audio-micmute",
+        }
+
+        with patch.object(sync, "trigger_text", side_effect=lambda device: triggers[device]), \
+             patch.object(sync, "run", side_effect=lambda *a: {
+                 ("pactl", "get-source-mute", "@DEFAULT_SOURCE@"): "Mute: yes",
+             }[a]), \
+             patch.object(sync.shutil, "which", return_value=None), \
+             patch.object(sync, "update") as update:
+            sync.sync()
+        self.assertEqual(update.call_args_list, [
+            unittest.mock.call("platform::micmute", True),
+        ])
+
+    def test_off_disables_one_led_without_disabling_the_other(self):
+        sync.os.environ["MUTE_LED_SPEAKER"] = "off"
+        sync.os.environ["MUTE_LED_MIC"] = "on"
+        answers = {
+            ("pactl", "get-source-mute", "@DEFAULT_SOURCE@"): "Mute: no",
+        }
+        with patch.object(sync, "run", side_effect=lambda *a: answers[a]), \
+             patch.object(sync, "update") as update:
+            sync.sync()
+        self.assertEqual(update.call_args_list, [
+            unittest.mock.call("platform::micmute", False),
+        ])
 
 
 if __name__ == "__main__":
