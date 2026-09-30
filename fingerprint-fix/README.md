@@ -6,10 +6,10 @@ While upstream `libfprint >= 1.94.100` includes the `focaltech_moc` driver suppo
 
 ## Root Cause
 
-1. Upstream systemd ships `/usr/lib/udev/hwdb.d/60-autosuspend-fingerprint-reader.hwdb`, which matches `usb:v2808pA97A*` and sets `ID_AUTOSUSPEND=1`.
-2. After 2 seconds of inactivity, the kernel / udev autosuspends the device (`power/control=auto`, `power/runtime_status=suspended`).
-3. When suspended, the hardware **does not wake up upon finger contact**. Touch and press events are silently dropped.
-4. As a result, running `fprintd-enroll`, `fprintd-verify`, or PAM fingerprint authentication (`pam_fprintd.so`) appears completely hung until it times out.
+1. Upstream systemd ships `/usr/lib/udev/hwdb.d/60-autosuspend-fingerprint-reader.hwdb`, which matches `usb:v2808pA97A*` and sets `ID_AUTOSUSPEND=1`. libfprint's own `60-autosuspend-libfprint-2.hwdb` does the same and treats this id as safe to autosuspend.
+2. With `power/control=auto` and a positive `power/autosuspend_delay_ms` (2000 on a normal USB autosuspend setup), the reader reaches `power/runtime_status=suspended` after that delay.
+3. `power/control=auto` by itself does not mean the reader is suspended. A negative delay, including a boot with `usbcore.autosuspend=-1`, leaves `runtime_status=active` and scans are not affected.
+4. While `runtime_status=suspended`, the hardware **does not wake up upon finger contact**. Touch and press events are silently dropped, so `fprintd-enroll`, `fprintd-verify`, and PAM fingerprint authentication (`pam_fprintd.so`) wait until they time out.
 
 > **Caution:** Do **not** attempt to wake the device by toggling USB `authorized` (0 → 1) or cycling driver binds. On the FT9349 controller, doing so wedges the controller firmware and can freeze kernel workers in uninterruptible sleep (`D`-state). If the controller becomes wedged, only a full power-off shutdown and cold boot restores it.
 
@@ -22,7 +22,7 @@ The sensor is physically integrated into the **keyboard power button** (the top-
 | File | Destination | Purpose |
 |---|---|---|
 | `61-fingerprint-no-autosuspend.hwdb` | `/etc/udev/hwdb.d/` | Overrides systemd's hwdb to set `ID_AUTOSUSPEND=0` |
-| `61-fingerprint-no-autosuspend.rules` | `/etc/udev/rules.d/` | Sets `power/control="on"` and `power/persist="1"` |
+| `61-fingerprint-no-autosuspend.rules` | `/etc/udev/rules.d/` | Sets `power/control="on"` on add or bind |
 
 ## Installation
 
@@ -70,9 +70,17 @@ To use your fingerprint for `sudo`, add `pam_fprintd.so` to `/etc/pam.d/sudo`:
 auth      sufficient pam_fprintd.so
 ```
 
-If on a laptop with clamshell lid detection, precede it with a lid check so fingerprint authentication is skipped when the laptop lid is closed:
+On Omarchy, the laptop-closed helper can skip fingerprint authentication while the lid is shut. That binary is part of Omarchy; other distributions do not ship it.
 
 ```pam
 auth      [success=1 default=ignore] pam_exec.so quiet /usr/bin/omarchy-hw-laptop-closed
 auth      sufficient pam_fprintd.so
 ```
+
+## Uninstall
+
+```sh
+./patch.sh uninstall fingerprint-fix
+```
+
+Removing the rule does not change `power/control` on a reader that is already bound. The uninstall hook writes `auto` back when the device is present, so a replug is not required for that file. Upstream hwdb can then autosuspend the reader again. If the reader is absent during uninstall, `power/control` stays as it was until the device is added.

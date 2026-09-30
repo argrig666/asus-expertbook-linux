@@ -709,7 +709,7 @@ PRs adding `module.sh` entries for sibling models are welcome.
 
 <details><summary><b>Does the fingerprint reader work?</b></summary>
 
-Yes, once USB autosuspend is disabled. The FocalTech FT9349 (`2808:a97a`) is supported by upstream `libfprint 1.94.100` and later, but systemd's default hwdb (`60-autosuspend-fingerprint-reader.hwdb`) enables USB autosuspend on it. After 2 seconds of inactivity the chip enters `runtime_status=suspended` and drops touch events, causing `fprintd-enroll`, `fprintd-verify`, and PAM auth to hang indefinitely.
+Yes, once USB autosuspend is disabled. The FocalTech FT9349 (`2808:a97a`) is supported by upstream `libfprint 1.94.100` and later, but systemd's default hwdb (`60-autosuspend-fingerprint-reader.hwdb`) enables USB autosuspend on it. With `power/control=auto` and a positive autosuspend delay, the chip enters `runtime_status=suspended` and drops touch events, so `fprintd-enroll`, `fprintd-verify`, and PAM auth wait until they time out. `control=auto` with a negative delay, such as `usbcore.autosuspend=-1`, does not suspend the reader.
 
 Install [`fingerprint-fix`](fingerprint-fix/) to disable autosuspend, then enroll using:
 
